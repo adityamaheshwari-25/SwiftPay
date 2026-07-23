@@ -79,8 +79,11 @@ public class SecurityConfig {
 //            		).permitAll()
 //            .anyRequest().authenticated()
         		
-        		// Preflight
+                // Preflight
                 .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
+
+                // Public liveness/readiness check; all other Actuator endpoints remain disabled.
+                .requestMatchers(HttpMethod.GET, "/actuator/health").permitAll()
 
                 // Public
                 .requestMatchers(
