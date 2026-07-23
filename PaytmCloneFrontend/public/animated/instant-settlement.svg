@@ -1,0 +1,37 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 420" role="img" aria-label="SwiftPay instant settlement animation">
+  <defs>
+    <linearGradient id="bg" x1="0" x2="1" y1="0" y2="1">
+      <stop offset="0%" stop-color="#edf4ff"/>
+      <stop offset="100%" stop-color="#ecf8ff"/>
+    </linearGradient>
+    <linearGradient id="cta" x1="0" x2="1">
+      <stop offset="0%" stop-color="#0f60ea"/>
+      <stop offset="100%" stop-color="#3f83ff"/>
+    </linearGradient>
+  </defs>
+  <rect width="720" height="420" fill="url(#bg)"/>
+  <rect x="86" y="42" width="548" height="336" rx="30" fill="#ffffff" stroke="#cfddf4"/>
+  <text x="126" y="94" fill="#0f2b66" font-size="30" font-family="Arial, sans-serif" font-weight="700">Instant Settlement</text>
+  <text x="126" y="124" fill="#50719a" font-size="15" font-family="Arial, sans-serif">Move wallet balance to bank instantly with low transparent fee.</text>
+
+  <rect x="126" y="148" width="206" height="158" rx="20" fill="#f4f8ff"/>
+  <text x="151" y="183" fill="#45618a" font-size="14" font-family="Arial, sans-serif">Wallet balance</text>
+  <text x="151" y="227" fill="#0f2b66" font-size="35" font-family="Arial, sans-serif" font-weight="700">₹95,400</text>
+  <rect x="146" y="250" width="166" height="36" rx="10" fill="url(#cta)"/>
+  <text x="180" y="273" fill="#ffffff" font-size="14" font-family="Arial, sans-serif" font-weight="700">Settle instantly</text>
+
+  <rect x="388" y="148" width="206" height="158" rx="20" fill="#f6fbff"/>
+  <text x="412" y="183" fill="#45618a" font-size="14" font-family="Arial, sans-serif">Bank receives</text>
+  <text x="412" y="227" fill="#0f2b66" font-size="35" font-family="Arial, sans-serif" font-weight="700">₹94,446</text>
+  <text x="412" y="257" fill="#1c915f" font-size="15" font-family="Arial, sans-serif" font-weight="700">Fee: 1% only</text>
+
+  <path d="M338 224h48" stroke="#68a0ef" stroke-width="3" stroke-dasharray="7 7">
+    <animate attributeName="stroke-dashoffset" values="0;-28" dur="1.1s" repeatCount="indefinite"/>
+  </path>
+  <polygon points="383,218 396,224 383,230" fill="#68a0ef">
+    <animate attributeName="opacity" values="1;0.45;1" dur="1.1s" repeatCount="indefinite"/>
+  </polygon>
+
+  <rect x="466" y="72" width="128" height="44" rx="15" fill="#e8f4ff" stroke="#b5d2f5"/>
+  <text x="487" y="99" fill="#1663ef" font-size="16" font-family="Arial, sans-serif" font-weight="700">Lowest 1%*</text>
+</svg>
