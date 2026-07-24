@@ -32,8 +32,10 @@ public class KycDocument {
 
     private String documentType;
     
-    @Column(nullable = false)
-    private String filePath;
+    // Keep the existing database column name for compatibility with current data.
+    // New values are Azure Blob object keys, never local filesystem paths.
+    @Column(name = "file_path", nullable = false, length = 512)
+    private String storageKey;
 
     private String fileName;
 

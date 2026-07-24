@@ -6,7 +6,7 @@ import lombok.Getter;
 @AllArgsConstructor
 @Getter
 public class KycFileDataDto {
-	private String filePath;
+	private byte[] fileData;
 	private String fileName;
 	private String contentType;
 }

@@ -1,11 +1,7 @@
 package com.example.demo.controller;
 
-import java.io.IOException;
-import java.nio.file.Path;
-import java.nio.file.Paths;
-
+import org.springframework.core.io.ByteArrayResource;
 import org.springframework.core.io.Resource;
-import org.springframework.core.io.UrlResource;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
@@ -83,13 +79,12 @@ public class AppUserController {
      */
 	@GetMapping("/kyc/me/file")
 	@PreAuthorize("hasRole('USER') or hasRole('MERCHANT')")
-	public ResponseEntity<Resource> viewMyKycFile(Authentication authentication) throws IOException, ResourceNotFoundException, UserNotFoundException {
+	public ResponseEntity<Resource> viewMyKycFile(Authentication authentication) throws ResourceNotFoundException, UserNotFoundException {
 		
 		log.debug("Fetching kyc file for the user [{}]", authentication.getName());
 		KycFileDataDto fileData = kycDocumentService.getMyKycFile(authentication);
 		
-		Path path = Paths.get(fileData.getFilePath());
-		Resource resource = (Resource) new UrlResource(path.toUri());
+		Resource resource = new ByteArrayResource(fileData.getFileData());
 		
 		return ResponseEntity.ok()
 					.contentType(MediaType.parseMediaType(fileData.getContentType()))

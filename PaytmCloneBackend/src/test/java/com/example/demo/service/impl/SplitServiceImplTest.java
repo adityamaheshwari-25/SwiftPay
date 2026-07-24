@@ -22,6 +22,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
+import org.mockito.Spy;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
@@ -44,6 +45,7 @@ import com.example.demo.exception.InvalidMpinException;
 import com.example.demo.exception.MembersAreRequiredException;
 import com.example.demo.exception.ResourceNotFoundException;
 import com.example.demo.factory.TransactionFactory;
+import com.example.demo.mapper.SplitMapper;
 import com.example.demo.repository.AppUserRepository;
 import com.example.demo.repository.SplitParticipantRespository;
 import com.example.demo.repository.SplitRequestRepository;
@@ -89,6 +91,7 @@ class SplitServiceImplTest {
     @Mock private TransactionFactory transactionFactory;
     @Mock private TransactionService transactionService;
     @Mock private Authentication auth;
+    @Spy private SplitMapper splitMapper = new SplitMapper();
 
     @InjectMocks
     private SplitServiceImpl service;
@@ -105,6 +108,7 @@ class SplitServiceImplTest {
 
         AppUser member = new AppUser();
         member.setId(2L);
+        member.setMobile("9999");
         member.setRole(Role.USER);
 
         SplitCreateRequestDto dto = mock(SplitCreateRequestDto.class);
@@ -132,6 +136,7 @@ class SplitServiceImplTest {
     void createSplit_shouldThrow_whenMembersEmpty() {
         SplitCreateRequestDto dto = mock(SplitCreateRequestDto.class);
         when(dto.getMemberMobiles()).thenReturn(Collections.emptyList());
+        when(dto.getAmount()).thenReturn(new BigDecimal("200.00"));
 
         when(currentUserService.getCurrentUser(auth)).thenReturn(new AppUser());
 

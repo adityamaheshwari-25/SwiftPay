@@ -1,7 +1,5 @@
 package com.example.demo.controller;
 
-import java.io.IOException;
-
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -55,7 +53,7 @@ public class KycController {
 	public ResponseEntity<KycDocumentUploadResponseDto> uploadKyc(
 				@RequestParam("file") MultipartFile file,
 				Authentication authentication
-			) throws UserNotFoundException, FileNotUploadedException, LargerFileSizeException, InvalidFileTypeException, KycAlreadySubmittedException, IOException {
+			) throws UserNotFoundException, FileNotUploadedException, LargerFileSizeException, InvalidFileTypeException, KycAlreadySubmittedException {
 		log.info("User [{}] started uploading kyc document", authentication.getName());
 		
 		KycDocumentUploadResponseDto response = kycDocumentService.uploadKyc(authentication, file);

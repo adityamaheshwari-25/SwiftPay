@@ -12,6 +12,7 @@ out/
 !.env.example
 *.log
 logs/
+uploads/
 
 # Operating-system files
 .DS_Store

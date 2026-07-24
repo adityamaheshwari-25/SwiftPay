@@ -11,12 +11,13 @@ import com.example.demo.exception.*;
 import com.example.demo.repository.AppUserRepository;
 import com.example.demo.repository.KycDocumentRepository;
 import com.example.demo.security.CurrentUserService;
+import com.example.demo.service.storage.DocumentStorageService;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.api.extension.ExtendWith;
 
+import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -24,9 +25,6 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.multipart.MultipartFile;
 
-import java.io.IOException;
-import java.nio.file.Files;
-import java.nio.file.Path;
 import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -43,6 +41,7 @@ class KycDocumentServiceImplTest {
     @Mock private CurrentUserService currentUserService;
     @Mock private KycDocumentRepository kycDocumentRepository;
     @Mock private AppUserRepository appUserRepository;
+    @Mock private DocumentStorageService documentStorageService;
     @Mock private Authentication authentication;
     @Mock private MultipartFile file;
 
@@ -50,9 +49,6 @@ class KycDocumentServiceImplTest {
     private KycDocumentServiceImpl service;
 
     private AppUser user;
-
-    @TempDir
-    Path tempDir;
 
     @BeforeEach
     void setup() {
@@ -81,7 +77,15 @@ class KycDocumentServiceImplTest {
 
         assertEquals(KycStatus.PENDING, response.getStatus());
 
-        verify(kycDocumentRepository).save(any(KycDocument.class));
+        ArgumentCaptor<KycDocument> documentCaptor = ArgumentCaptor.forClass(KycDocument.class);
+        verify(kycDocumentRepository).save(documentCaptor.capture());
+        KycDocument savedDocument = documentCaptor.getValue();
+        assertNotNull(savedDocument.getStorageKey());
+        assertTrue(savedDocument.getStorageKey().startsWith("kyc/user-1/"));
+        verify(documentStorageService).store(
+                eq(savedDocument.getStorageKey()),
+                eq("dummy".getBytes()),
+                eq("application/pdf"));
         verify(appUserRepository).save(user);
         assertFalse(user.isKycVerified());
     }
@@ -190,17 +194,19 @@ class KycDocumentServiceImplTest {
     void getMyKycFile_shouldReturnFileData_whenExists() throws Exception {
         KycDocument doc = new KycDocument();
         doc.setUser(user);
-        doc.setFilePath("path/test.pdf");
+        doc.setStorageKey("kyc/user-1/document.pdf");
         doc.setFileName("test.pdf");
         doc.setContentType("application/pdf");
 
         when(kycDocumentRepository.findByUser(user))
                 .thenReturn(Optional.of(doc));
+        when(documentStorageService.load(doc.getStorageKey()))
+                .thenReturn(Optional.of("document".getBytes()));
 
         KycFileDataDto result =
                 service.getMyKycFile(authentication);
 
-        assertEquals("path/test.pdf", result.getFilePath());
+        assertArrayEquals("document".getBytes(), result.getFileData());
         assertEquals("test.pdf", result.getFileName());
     }
 

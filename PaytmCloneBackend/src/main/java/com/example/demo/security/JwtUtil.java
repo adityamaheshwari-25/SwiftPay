@@ -9,6 +9,7 @@ import javax.crypto.SecretKey;
 
 import org.springframework.stereotype.Component;
 
+import com.example.demo.config.JwtProperties;
 import com.example.demo.entity.AppUser;
 
 import io.jsonwebtoken.Claims;
@@ -18,11 +19,15 @@ import io.jsonwebtoken.security.Keys;
 
 @Component
 public class JwtUtil {
-	private final String SECRET = "SwiftPaySecretKeyForAdityaMaheshwariOnlyAndOnly";
-	private final long EXPIRATION = 1000 * 60 * 60 * 10; // 10hrs
+
+	private final JwtProperties properties;
+
+	public JwtUtil(JwtProperties properties) {
+		this.properties = properties;
+	}
 	
 	private SecretKey getSigningKey() {
-        return Keys.hmacShaKeyFor(SECRET.getBytes(StandardCharsets.UTF_8));
+        return Keys.hmacShaKeyFor(properties.getSecret().getBytes(StandardCharsets.UTF_8));
     }
 	
 	public String generateToken(AppUser user) {
@@ -36,7 +41,7 @@ public class JwtUtil {
 				.setClaims(claims)
 				.setSubject(user.getEmail())
 				.setIssuedAt(new Date())
-				.setExpiration(new Date(System.currentTimeMillis() + EXPIRATION))
+				.setExpiration(new Date(System.currentTimeMillis() + properties.getExpiration().toMillis()))
 				.signWith(getSigningKey(), SignatureAlgorithm.HS256)
 				.compact();
 	}

@@ -9,6 +9,7 @@ import com.example.demo.exception.*;
 
 import com.example.demo.mapper.AdminKycMapper;
 import com.example.demo.repository.KycDocumentRepository;
+import com.example.demo.service.storage.DocumentStorageService;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -20,8 +21,6 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.core.io.Resource;
 import org.springframework.http.ResponseEntity;
 
-import java.nio.file.Files;
-import java.nio.file.Path;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
@@ -39,6 +38,7 @@ class KycAdminServiceImplTest {
 
     @Mock private KycDocumentRepository kycDocumentRepository;
     @Mock private AdminKycMapper adminKycMapper;
+    @Mock private DocumentStorageService documentStorageService;
 
     @InjectMocks
     private KycAdminServiceImpl service;
@@ -184,19 +184,16 @@ class KycAdminServiceImplTest {
         AppUser user = new AppUser();
         user.setId(userId);
 
-        Path tempFile = Files.createTempFile("kyc-test", ".pdf");
-
         KycDocument kyc = new KycDocument();
         kyc.setUser(user);
-        kyc.setFilePath(tempFile.toString());
+        kyc.setStorageKey("kyc/user-10/document.pdf");
         kyc.setContentType("application/pdf");
         kyc.setFileName("test.pdf");
 
         when(kycDocumentRepository.findByUserId(userId))
                 .thenReturn(Optional.of(kyc));
-
-        when(kycDocumentRepository.findByUser(user))
-                .thenReturn(Optional.of(kyc));
+        when(documentStorageService.load(kyc.getStorageKey()))
+                .thenReturn(Optional.of("document".getBytes()));
 
         ResponseEntity<Resource> response =
                 service.viewKycByUserId(userId);
@@ -205,8 +202,6 @@ class KycAdminServiceImplTest {
         assertEquals("application/pdf",
                 response.getHeaders().getContentType().toString());
         assertNotNull(response.getBody());
-
-        Files.deleteIfExists(tempFile);
     }
 
     @Test
