@@ -19,7 +19,7 @@ Subscription
 │   ├── stswiftpaydev<suffix>           Storage account
 │   │   └── kyc-documents               Private blob container
 │   ├── appi-swiftpay-dev               Application Insights
-│   └── vnet-swiftpay-dev               Virtual network
+│   └── vnet-swiftpay-dev               Optional; not used by current dev
 │
 └── rg-swiftpay-prod
     ├── swa-swiftpay-prod-<suffix>
@@ -52,18 +52,20 @@ Keep the App Service, database, Key Vault, storage account, Application Insights
 and virtual network for an environment in the same region whenever the service
 supports that region.
 
-## 2. Create one virtual network per environment
+## 2. Plan virtual networking
 
-This enables private MySQL connectivity.
+The current development environment intentionally uses public service endpoints
+and does not require a VNet. Skip VNet integration for dev and follow the
+restricted firewall instructions in section 8.
+
+Before creating production:
 
 1. Search for **Virtual networks** and choose **Create**.
-2. Create `vnet-swiftpay-dev` in `rg-swiftpay-dev` with address space
-   `10.10.0.0/16`.
-3. Add `snet-appservice` as `10.10.1.0/24`.
-4. Add `snet-mysql` as `10.10.2.0/24` and delegate it to
+2. Create `vnet-swiftpay-prod` in `rg-swiftpay-prod` with address space
+   `10.20.0.0/16`.
+3. Add `snet-appservice` as `10.20.1.0/24`.
+4. Add `snet-mysql` as `10.20.2.0/24` and delegate it to
    `Microsoft.DBforMySQL/flexibleServers`.
-5. Repeat in production with `vnet-swiftpay-prod`, `10.20.0.0/16`,
-   `10.20.1.0/24`, and `10.20.2.0/24`.
 
 Do not place other resources in the delegated MySQL subnet.
 
@@ -81,9 +83,12 @@ Repeat these steps once in each resource group.
    and redundancy for production.
 4. Choose MySQL authentication, create a unique administrator username, and
    generate a strong password. Do not reuse the dev credentials in production.
-5. On **Networking**, choose **Private access (VNet Integration)**. Select the
-   environment VNet and `snet-mysql`. Let Azure create or select the linked
-   private DNS zone.
+5. Choose networking by environment:
+   - Current dev: **Public access**, TLS required, and firewall rules restricted
+     to the App Service outbound addresses as described in section 8.
+   - Future production: **Private access (VNet Integration)** using
+     `vnet-swiftpay-prod` and `snet-mysql`; let Azure create/select the linked
+     private DNS zone.
 6. Create the server.
 7. Open the server and use **Settings > Databases > Add** to create a database
    named `swiftpay`. If the portal does not show that blade, use the portal's
@@ -149,8 +154,9 @@ Repeat per environment.
    when availability is required.
 4. After creation, open **Settings > Identity**, turn the system-assigned
    identity **On**, and save.
-5. Open **Networking > VNet integration > Add VNet**, select the environment
-   VNet and `snet-appservice`.
+5. Skip VNet integration for the current development App Service. For
+   production, open **Networking > VNet integration > Add VNet** and select
+   `vnet-swiftpay-prod` with `snet-appservice`.
 
 ### Assign managed-identity roles
 
@@ -173,7 +179,7 @@ Open **App Service > Settings > Environment variables > App settings** and add:
 | `DB_USERNAME` | `@Microsoft.KeyVault(VaultName=<vault>;SecretName=DB-USERNAME)` |
 | `DB_PASSWORD` | `@Microsoft.KeyVault(VaultName=<vault>;SecretName=DB-PASSWORD)` |
 | `JPA_DDL_AUTO` | `update` for the initial deployment |
-| `CORS_ALLOWED_ORIGINS` | Exact Static Web App URL, added after step 8 |
+| `CORS_ALLOWED_ORIGINS` | Exact development Static Web App URL from its Overview page |
 | `JWT_SECRET` | `@Microsoft.KeyVault(VaultName=<vault>;SecretName=JWT-SECRET)` |
 | `JWT_EXPIRATION` | `10h` |
 | `SUPERADMIN_EMAIL` | `@Microsoft.KeyVault(VaultName=<vault>;SecretName=SUPERADMIN-EMAIL)` |
@@ -190,61 +196,125 @@ with versioned Flyway or Liquibase migrations, then set `JPA_DDL_AUTO=validate`.
 
 ## 7. Deploy the backend JAR
 
-The repository is a monorepo, so the backend project root is
-`PaytmCloneBackend`.
+The repository now owns the development backend workflow at
+`.github/workflows/dev-backend.yml`; do not ask Deployment Center to generate a
+second workflow. A push to `main` that changes `PaytmCloneBackend` runs all Maven
+tests, packages the executable JAR, authenticates to Azure with OpenID Connect
+(OIDC), deploys it, and verifies `/actuator/health`.
 
-1. Open the App Service and select **Deployment > Deployment Center**.
-2. Select **GitHub**, authorize the repository, and select the intended branch:
-   normally a development branch for dev and `main` for production.
-3. Select **GitHub Actions** as the provider and save.
-4. Inspect the generated workflow in GitHub. Its build commands must execute in
-   `PaytmCloneBackend`, run `./mvnw test` (or `mvnw.cmd test` only on Windows),
-   package the application, and deploy the generated `target/*.jar`.
-5. Watch **Deployment Center > Logs** until deployment succeeds.
-6. Open `https://<app-name>.azurewebsites.net/actuator/health`. It should return
-   a minimal response with status `UP`.
+### Create the GitHub development environment
+
+1. In `adityamaheshwari-25/SwiftPay`, open **Settings > Environments > New
+   environment** and create `development`.
+2. Under **Environment variables**, add:
+
+   | Variable | Development value |
+   | --- | --- |
+   | `AZURE_WEBAPP_NAME` | Exact App Service resource name, without `.azurewebsites.net` |
+   | `API_BASE_URL` | `https://<app-service-name>.azurewebsites.net/api/v1` |
+
+3. Under **Environment secrets**, the completed dev setup will contain:
+
+   - `AZURE_CLIENT_ID`
+   - `AZURE_TENANT_ID`
+   - `AZURE_SUBSCRIPTION_ID`
+   - `AZURE_STATIC_WEB_APPS_API_TOKEN`
+
+### Configure GitHub-to-Azure OIDC
+
+This identity is only for CI/CD deployment. It is different from the App
+Service's system-assigned managed identity, which the running application uses
+for Key Vault and Blob Storage.
+
+1. In Azure Portal, open **Microsoft Entra ID > App registrations > New
+   registration** and create `github-swiftpay-dev`.
+2. Copy its **Application (client) ID** and **Directory (tenant) ID**.
+3. Open the registration's **Certificates & secrets > Federated credentials >
+   Add credential**.
+4. Choose **GitHub Actions deploying Azure resources** and enter:
+
+   - Organization: `adityamaheshwari-25`
+   - Repository: `SwiftPay`
+   - Entity type: `Environment`
+   - GitHub environment name: `development`
+
+5. Open the development App Service, then **Access control (IAM) > Add role
+   assignment**. Assign **Website Contributor** to the
+   `github-swiftpay-dev` service principal. Scope it to this App Service rather
+   than the whole subscription.
+6. In Azure Portal, open **Subscriptions**, copy the subscription ID, and add
+   the four values to the matching GitHub environment secrets:
+
+   | GitHub secret | Azure value |
+   | --- | --- |
+   | `AZURE_CLIENT_ID` | Application (client) ID |
+   | `AZURE_TENANT_ID` | Directory (tenant) ID |
+   | `AZURE_SUBSCRIPTION_ID` | Azure subscription ID |
+
+7. In GitHub, open **Actions > Dev backend CI/CD > Run workflow** for the first
+   deployment, or push a backend change to `main`.
+8. Open `https://<app-name>.azurewebsites.net/actuator/health`; the workflow
+   also retries this check for up to three minutes and fails if the application
+   does not report `UP`.
 
 No controller is needed for the health URL; Spring Boot Actuator registers it.
 All other Actuator endpoints remain disabled.
 
 ## 8. Create Azure Static Web Apps
 
-Repeat once for dev and once for prod.
+The repository owns the development frontend workflow at
+`.github/workflows/dev-frontend.yml`. It installs the locked npm dependencies,
+builds `PaytmCloneFrontend/dist` with the development API URL, and uploads that
+prebuilt directory to Static Web Apps.
 
-1. Search for **Static Web Apps** and choose **Create**.
-2. Select the environment resource group, choose a plan, and connect the GitHub
-   repository and branch.
-3. Use **Custom** build settings:
-
-   - App location: `PaytmCloneFrontend`
-   - API location: leave empty
-   - Output location: `dist`
-
-4. Create the resource. Azure commits a GitHub Actions workflow to the selected
-   branch.
-5. In the generated workflow, expose these variables to the frontend build:
-
-```yaml
-env:
-  VITE_API_BASE_URL: https://<app-name>.azurewebsites.net/api/v1
-  VITE_APP_NAME: PayWallet
-```
-
-Vite values are compiled into the browser bundle, so setting them only as
-runtime Static Web Apps settings is not sufficient. The API URL is not a secret
-and can instead be stored as a GitHub Actions repository/environment variable.
-Use a different URL in the dev and production workflows.
-
+1. Open the development Static Web App in Azure Portal.
+2. From **Overview**, select **Manage deployment token** and copy/reset the
+   deployment token.
+3. In GitHub's `development` environment, create the secret
+   `AZURE_STATIC_WEB_APPS_API_TOKEN` with that value.
+4. Confirm that the `API_BASE_URL` environment variable created in section 7 is
+   the exact development backend URL ending in `/api/v1`.
+5. In GitHub, open **Actions > Dev frontend CI/CD > Run workflow**, or push a
+   frontend change to `main`.
 6. After the workflow succeeds, copy the default Static Web App URL.
-7. Return to the matching App Service environment variables and set
+7. Return to the development App Service environment variables and set
    `CORS_ALLOWED_ORIGINS` to that exact origin, for example
    `https://kind-tree-012345678.1.azurestaticapps.net`. Do not add a trailing
    slash or use `*`.
 8. Restart the App Service and test sign-in and an authenticated API request
    from the Static Web App.
 
+Vite values are compiled into the browser bundle, so setting the API URL only as
+a runtime Static Web Apps setting is not sufficient.
+
 The repository's `public/staticwebapp.config.json` supplies SPA route fallback
 and basic response security headers.
+
+### Branch strategy
+
+The current single `main` branch is sufficient:
+
+- Pushes to `main` automatically deploy changed backend/frontend code to dev.
+- Short-lived feature branches and pull requests can be added for code review,
+  but a permanent `dev` branch is not required.
+- Production automation is intentionally not present yet. When production is
+  created, use a separate GitHub `production` environment and deploy a release
+  tag or manually approved commit from `main`. This avoids long-lived dev/prod
+  branches drifting apart.
+
+### Development networking without a VNet
+
+Until production private networking is added:
+
+1. Open **App Service > Properties** and copy all outbound and possible outbound
+   IPv4 addresses.
+2. Open the development MySQL Flexible Server **Networking** page and add
+   firewall rules for those App Service outbound addresses.
+3. Keep TLS required in the JDBC URL.
+4. Key Vault and Storage may use public service endpoints for dev, but retain
+   RBAC/managed-identity authorization and a private Blob container.
+5. Do not expose MySQL to all IPv4 addresses. Production should use the planned
+   VNet/private endpoint design.
 
 ## 9. Enable Application Insights and health checks
 
@@ -313,3 +383,7 @@ credential/data-incident review before treating the repository as clean.
 - [Azure Blob Storage with Java](https://learn.microsoft.com/en-us/azure/storage/blobs/storage-quickstart-blobs-java)
 - [App Service Health check](https://learn.microsoft.com/en-us/azure/app-service/monitor-instances-health-check)
 - [Application Insights for Java App Service](https://learn.microsoft.com/en-us/azure/app-service/configure-language-java-apm)
+- [Deploy App Service with GitHub Actions](https://learn.microsoft.com/en-us/azure/app-service/deploy-github-actions)
+- [Authenticate GitHub Actions to Azure](https://learn.microsoft.com/en-us/azure/developer/github/connect-from-azure)
+- [Static Web Apps build configuration](https://learn.microsoft.com/en-us/azure/static-web-apps/build-configuration)
+- [GitHub deployment environments](https://docs.github.com/en/actions/concepts/workflows-and-actions/deployment-environments)

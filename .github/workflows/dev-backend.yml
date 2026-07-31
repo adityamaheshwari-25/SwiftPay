@@ -1,0 +1,77 @@
+name: Dev backend CI/CD
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "PaytmCloneBackend/**"
+      - ".github/workflows/dev-backend.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: swiftpay-dev-backend
+  cancel-in-progress: true
+
+jobs:
+  build-test-deploy:
+    name: Test, package, and deploy backend
+    runs-on: ubuntu-latest
+    environment: development
+    timeout-minutes: 20
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: maven
+          cache-dependency-path: PaytmCloneBackend/pom.xml
+
+      - name: Make Maven wrapper executable
+        run: chmod +x mvnw
+        working-directory: PaytmCloneBackend
+
+      - name: Run tests and package Spring Boot JAR
+        run: ./mvnw --batch-mode --no-transfer-progress clean verify
+        working-directory: PaytmCloneBackend
+
+      - name: Sign in to Azure with OpenID Connect
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Deploy JAR to the development App Service
+        uses: azure/webapps-deploy@v3
+        with:
+          app-name: ${{ vars.AZURE_WEBAPP_NAME }}
+          package: PaytmCloneBackend/target/*.jar
+
+      - name: Verify development health endpoint
+        shell: bash
+        env:
+          HEALTH_URL: https://${{ vars.AZURE_WEBAPP_NAME }}.azurewebsites.net/actuator/health
+        run: |
+          for attempt in {1..18}; do
+            response="$(curl --silent --show-error --fail "$HEALTH_URL" || true)"
+            if [[ "$response" == *'"status":"UP"'* ]]; then
+              echo "Backend health check passed: $HEALTH_URL"
+              exit 0
+            fi
+
+            echo "Waiting for the backend to become healthy (attempt $attempt/18)..."
+            sleep 10
+          done
+
+          echo "Backend did not become healthy: $HEALTH_URL"
+          exit 1

@@ -1,0 +1,57 @@
+name: Dev frontend CI/CD
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "PaytmCloneFrontend/**"
+      - ".github/workflows/dev-frontend.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: swiftpay-dev-frontend
+  cancel-in-progress: true
+
+jobs:
+  build-deploy:
+    name: Build and deploy frontend
+    runs-on: ubuntu-latest
+    environment: development
+    timeout-minutes: 15
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: PaytmCloneFrontend/package-lock.json
+
+      - name: Install frontend dependencies
+        run: npm ci
+        working-directory: PaytmCloneFrontend
+
+      - name: Build React application
+        run: npm run build
+        working-directory: PaytmCloneFrontend
+        env:
+          VITE_API_BASE_URL: ${{ vars.API_BASE_URL }}
+          VITE_APP_NAME: PayWallet
+
+      - name: Deploy to the development Static Web App
+        uses: Azure/static-web-apps-deploy@v1
+        with:
+          azure_static_web_apps_api_token: ${{ secrets.AZURE_STATIC_WEB_APPS_API_TOKEN }}
+          action: upload
+          app_location: PaytmCloneFrontend/dist
+          api_location: ""
+          output_location: ""
+          skip_app_build: true
+          skip_api_build: true

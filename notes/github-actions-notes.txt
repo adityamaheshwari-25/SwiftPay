@@ -1,0 +1,8 @@
+Types of runners:
+1. Github hosted runners
+2. Self-hosted runners
+
+1. You can have multiple triggers in the array.
+2. For github runners, github uses its own Virtual machine to run all those CI/CD pipeline.
+3. all the jobs will be running in parallel by default.
+4. Variables can be created at 3 different levels, step, job and workflow level.
