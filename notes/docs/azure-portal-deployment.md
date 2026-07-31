@@ -210,8 +210,8 @@ tests, packages the executable JAR, authenticates to Azure with OpenID Connect
 
    | Variable | Development value |
    | --- | --- |
-   | `AZURE_WEBAPP_NAME` | Exact App Service resource name, without `.azurewebsites.net` |
-   | `API_BASE_URL` | `https://<app-service-name>.azurewebsites.net/api/v1` |
+   | `AZURE_WEBAPP_NAME` | Exact App Service resource **Name**, not its default hostname (for example, `swiftpay`) |
+   | `API_BASE_URL` | `https://<app-default-hostname>/api/v1` |
 
 3. Under **Environment secrets**, the completed dev setup will contain:
 
@@ -253,9 +253,11 @@ for Key Vault and Blob Storage.
 
 7. In GitHub, open **Actions > Dev backend CI/CD > Run workflow** for the first
    deployment, or push a backend change to `main`.
-8. Open `https://<app-name>.azurewebsites.net/actuator/health`; the workflow
-   also retries this check for up to three minutes and fails if the application
-   does not report `UP`.
+8. Open `https://<app-default-hostname>/actuator/health`; the workflow resolves
+   the App Service's current default hostname, retries this check for up to
+   three minutes, and fails if the application does not report `UP`. New App
+   Services can use a secure hostname such as
+   `<app-name>-<hash>.<region>.azurewebsites.net`.
 
 No controller is needed for the health URL; Spring Boot Actuator registers it.
 All other Actuator endpoints remain disabled.

@@ -51,6 +51,35 @@ jobs:
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
+      - name: Resolve development App Service
+        id: webapp
+        shell: bash
+        env:
+          WEBAPP_NAME: ${{ vars.AZURE_WEBAPP_NAME }}
+        run: |
+          if [[ -z "$WEBAPP_NAME" ]]; then
+            echo "::error::AZURE_WEBAPP_NAME is not configured in the development environment."
+            exit 1
+          fi
+
+          default_hostname="$(
+            az webapp list \
+              --query "[?name=='${WEBAPP_NAME}'].defaultHostName | [0]" \
+              --output tsv
+          )"
+
+          if [[ -z "$default_hostname" ]]; then
+            echo "::error::No App Service resource named '$WEBAPP_NAME' exists in the logged-in subscription."
+            echo "Available App Services in this subscription:"
+            az webapp list \
+              --query "[].{Name:name, ResourceGroup:resourceGroup, DefaultHostname:defaultHostName}" \
+              --output table
+            exit 1
+          fi
+
+          echo "Resolved '$WEBAPP_NAME' to '$default_hostname'."
+          echo "default_hostname=$default_hostname" >> "$GITHUB_OUTPUT"
+
       - name: Deploy JAR to the development App Service
         uses: azure/webapps-deploy@v3
         with:
@@ -60,7 +89,7 @@ jobs:
       - name: Verify development health endpoint
         shell: bash
         env:
-          HEALTH_URL: https://${{ vars.AZURE_WEBAPP_NAME }}.azurewebsites.net/actuator/health
+          HEALTH_URL: https://${{ steps.webapp.outputs.default_hostname }}/actuator/health
         run: |
           for attempt in {1..18}; do
             response="$(curl --silent --show-error --fail "$HEALTH_URL" || true)"
