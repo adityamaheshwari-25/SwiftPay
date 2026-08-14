@@ -1,5 +1,5 @@
-﻿import { useState, useEffect } from "react";
-import { useForm, Controller } from "react-hook-form";
+﻿import { useQuery } from "@tanstack/react-query";
+import { useForm, Controller, useWatch } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
@@ -15,14 +15,9 @@ export const SendMoneyModal = ({ open, onOpenChange, onSubmit, isLoading }) => {
   const labels = LABELS.userComponents.sendMoneyModal;
   const rupee = LABELS.splits.common.rupee;
 
-  const [receiver, setReceiver] = useState(null);
-  const [lookupLoading, setLookupLoading] = useState(false);
-  const [lookupNotFound, setLookupNotFound] = useState(false);
-
   const {
     control,
     handleSubmit,
-    watch,
     formState: { errors },
     reset,
   } = useForm({
@@ -35,29 +30,26 @@ export const SendMoneyModal = ({ open, onOpenChange, onSubmit, isLoading }) => {
     },
   });
 
-  const mobileNumber = watch("receiverMobile");
+  const mobileNumber = useWatch({ control, name: "receiverMobile" });
+  const amount = useWatch({ control, name: "amount" });
 
-  useEffect(() => {
-    if (mobileNumber?.length === 10) {
-      setLookupLoading(true);
-      setLookupNotFound(false);
-      userService
-        .lookupByMobile(mobileNumber)
-        .then((res) => {
-          const found = !!res;
-          setReceiver(found ? res : null);
-          setLookupNotFound(!found);
-        })
-        .catch(() => {
-          setReceiver(null);
-          setLookupNotFound(true);
-        })
-        .finally(() => setLookupLoading(false));
-    } else {
-      setReceiver(null);
-      setLookupNotFound(false);
-    }
-  }, [mobileNumber]);
+  const shouldLookupReceiver = mobileNumber?.length === 10;
+  const {
+    data: receiver = null,
+    isFetching: lookupLoading,
+    isError: lookupFailed,
+    isSuccess: lookupSucceeded,
+  } = useQuery({
+    queryKey: ["user", "lookup", mobileNumber],
+    queryFn: () => userService.lookupByMobile(mobileNumber),
+    enabled: shouldLookupReceiver,
+    retry: false,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
+  });
+  const lookupNotFound = shouldLookupReceiver
+    && !lookupLoading
+    && (lookupFailed || (lookupSucceeded && !receiver));
 
   const onInternalSubmit = async (values) => {
     if (!values.receiverMobile || !values.amount || !values.mpin) {
@@ -76,7 +68,6 @@ export const SendMoneyModal = ({ open, onOpenChange, onSubmit, isLoading }) => {
 
       if (success) {
         reset();
-        setReceiver(null);
         onOpenChange(false);
       }
     } catch (err) {
@@ -151,7 +142,7 @@ export const SendMoneyModal = ({ open, onOpenChange, onSubmit, isLoading }) => {
               </div>
 
               <Button type="submit" className="w-full h-12" disabled={isLoading}>
-                {isLoading ? labels.transferring : `${labels.title} ${rupee}${watch("amount") || 0}`}
+                {isLoading ? labels.transferring : `${labels.title} ${rupee}${amount || 0}`}
               </Button>
             </div>
           )}

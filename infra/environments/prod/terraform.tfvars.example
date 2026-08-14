@@ -1,0 +1,53 @@
+subscription_id                    = "00000000-0000-0000-0000-000000000000"
+resource_group_name                = "rg-swiftpay-prod-a1b2c3"
+backend_deploy_principal_object_id = "00000000-0000-0000-0000-000000000000"
+
+name_prefix   = "swiftpay"
+environment   = "prod"
+unique_suffix = "a1b2c3"
+
+# Static Web Apps is not available in Central India. East Asia is the nearest
+# supported control-plane region for this example.
+static_web_app_location = "East Asia"
+
+# Do not put the following required values in a committed tfvars file. Supply
+# them as masked GitHub Environment secrets or local environment variables:
+#   TF_VAR_database_admin_password
+#   TF_VAR_database_application_password
+#   TF_VAR_jwt_secret
+#   TF_VAR_superadmin_password
+superadmin_email = "platform-admin@example.com"
+
+# The application currently has in-memory SSE state and scheduled methods that
+# are not safe to run on multiple instances. Keep these defaults until that
+# application-level work is complete.
+app_service_instance_count        = 1
+app_service_zone_balancing_enabled = false
+enable_app_service_autoscale       = false
+
+mysql_version                                  = "8.0.21"
+mysql_sku_name                                 = "GP_Standard_D2ds_v4"
+mysql_storage_size_gb                          = 128
+mysql_backup_retention_days                    = 35
+mysql_geo_redundant_backup_enabled             = false
+mysql_zone_redundant_high_availability_enabled = true
+
+hikari_maximum_pool_size  = 10
+hikari_minimum_idle       = 2
+jwt_expiration            = "10h"
+jpa_ddl_auto              = "validate"
+
+additional_cors_allowed_origins = []
+
+alert_email_receivers = {
+  platform = "platform-alerts@example.com"
+}
+
+monitoring_daily_cap_gb = 5
+enable_delete_locks     = true
+
+tags = {
+  owner       = "platform-team"
+  cost-centre = "swiftpay"
+  criticality = "high"
+}

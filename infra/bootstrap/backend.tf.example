@@ -1,0 +1,11 @@
+# Bootstrap starts with local state because the remote state account does not
+# exist yet. After the first successful apply, rename/copy this file to
+# backend.tf, create backend.hcl from backend.hcl.example and run:
+#
+#   terraform init -migrate-state -backend-config=backend.hcl
+#
+# Confirm the migration prompt only after reviewing the destination values.
+terraform {
+  backend "azurerm" {}
+}
+

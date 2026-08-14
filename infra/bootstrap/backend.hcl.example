@@ -1,0 +1,15 @@
+# Populate these values from the individual state/tenant/subscription outputs
+# after the initial local-state bootstrap apply. Keep backend.hcl untracked.
+# The production_backend_config_* outputs use the production state key; this
+# bootstrap backend intentionally uses a different key.
+resource_group_name  = "rg-swiftpay-tfstate-a1b2c3"
+storage_account_name = "sttfa1b2c3swiftpayprod"
+container_name       = "tfstate"
+key                  = "swiftpay/bootstrap.tfstate"
+
+# The human performing the one-time migration must have Storage Blob Data
+# Contributor on the state account. CI later uses the Terraform identity.
+use_azuread_auth = true
+
+tenant_id       = "00000000-0000-0000-0000-000000000000"
+subscription_id = "00000000-0000-0000-0000-000000000000"

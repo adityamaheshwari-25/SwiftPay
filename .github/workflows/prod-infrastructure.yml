@@ -1,0 +1,465 @@
+name: Prod infrastructure
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "infra/**"
+      - ".github/workflows/prod-infrastructure.yml"
+  workflow_dispatch:
+    inputs:
+      operation:
+        description: Terraform operation to run against production
+        required: true
+        default: plan
+        type: choice
+        options:
+          - plan
+          - apply
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.event_name == 'pull_request' && format('swiftpay-infrastructure-pr-{0}', github.event.pull_request.number) || 'swiftpay-production-mutation' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  TF_IN_AUTOMATION: "true"
+  TF_INPUT: "false"
+
+jobs:
+  validate:
+    name: Format and validate Terraform
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Reject production operations outside main
+        if: github.event_name == 'workflow_dispatch' && github.ref != 'refs/heads/main'
+        shell: bash
+        run: |
+          echo "::error::Production Terraform may only be run from the main branch."
+          exit 1
+
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Set up Terraform 1.15.8
+        uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4
+        with:
+          terraform_version: "1.15.8"
+          terraform_wrapper: false
+
+      - name: Check Terraform formatting
+        run: terraform fmt -check -recursive infra
+
+      - name: Initialize and validate bootstrap configuration
+        shell: bash
+        run: |
+          terraform -chdir=infra/bootstrap init -backend=false -input=false
+          terraform -chdir=infra/bootstrap validate -no-color
+
+      - name: Initialize and validate production configuration
+        shell: bash
+        run: |
+          terraform -chdir=infra/environments/prod init -backend=false -input=false
+          terraform -chdir=infra/environments/prod validate -no-color
+
+  production_plan:
+    name: Plan production infrastructure
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
+    needs: validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    environment: production-infrastructure
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - name: Check out the approved revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Set up Terraform 1.15.8
+        uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4
+        with:
+          terraform_version: "1.15.8"
+          terraform_wrapper: false
+
+      - name: Validate protected production configuration
+        shell: bash
+        env:
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          TF_STATE_RESOURCE_GROUP: ${{ vars.TF_STATE_RESOURCE_GROUP }}
+          TF_STATE_STORAGE_ACCOUNT: ${{ vars.TF_STATE_STORAGE_ACCOUNT }}
+          TF_STATE_CONTAINER: ${{ vars.TF_STATE_CONTAINER }}
+          TF_STATE_KEY: ${{ vars.TF_STATE_KEY }}
+          TF_VAR_resource_group_name: ${{ vars.TF_VAR_resource_group_name }}
+          TF_VAR_backend_deploy_principal_object_id: ${{ vars.TF_VAR_backend_deploy_principal_object_id }}
+          TF_VAR_unique_suffix: ${{ vars.TF_VAR_unique_suffix }}
+          TF_VAR_superadmin_email: ${{ vars.TF_VAR_superadmin_email }}
+          TF_VAR_alert_email_receivers: ${{ vars.TF_VAR_alert_email_receivers }}
+          TF_VAR_database_application_username: ${{ vars.TF_VAR_database_application_username }}
+          TF_VAR_database_admin_password: ${{ secrets.TF_VAR_database_admin_password }}
+          TF_VAR_database_application_password: ${{ secrets.TF_VAR_database_application_password }}
+          TF_VAR_jwt_secret: ${{ secrets.TF_VAR_jwt_secret }}
+          TF_VAR_superadmin_password: ${{ secrets.TF_VAR_superadmin_password }}
+          TF_PLAN_ENCRYPTION_PASSPHRASE: ${{ secrets.TF_PLAN_ENCRYPTION_PASSPHRASE }}
+          REQUESTED_OPERATION: ${{ inputs.operation }}
+          OPTIONAL_STATIC_WEB_APP_LOCATION: ${{ vars.TF_VAR_static_web_app_location }}
+        run: |
+          required_names=(
+            AZURE_CLIENT_ID
+            AZURE_TENANT_ID
+            AZURE_SUBSCRIPTION_ID
+            TF_STATE_RESOURCE_GROUP
+            TF_STATE_STORAGE_ACCOUNT
+            TF_STATE_CONTAINER
+            TF_STATE_KEY
+            TF_VAR_resource_group_name
+            TF_VAR_backend_deploy_principal_object_id
+            TF_VAR_unique_suffix
+            TF_VAR_superadmin_email
+            TF_VAR_alert_email_receivers
+            TF_VAR_database_application_username
+            TF_VAR_database_admin_password
+            TF_VAR_database_application_password
+            TF_VAR_jwt_secret
+            TF_VAR_superadmin_password
+          )
+
+          missing_names=()
+          for name in "${required_names[@]}"; do
+            value="${!name-}"
+            if [[ -z "${value//[[:space:]]/}" ]]; then
+              missing_names+=("$name")
+            fi
+          done
+
+          if (( ${#missing_names[@]} > 0 )); then
+            printf '::error::Missing required production configuration: %s\n' "${missing_names[*]}"
+            exit 1
+          fi
+
+          uuid_pattern='^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
+          for name in AZURE_CLIENT_ID AZURE_TENANT_ID AZURE_SUBSCRIPTION_ID TF_VAR_backend_deploy_principal_object_id; do
+            if [[ ! "${!name}" =~ $uuid_pattern ]]; then
+              echo "::error::$name must be a UUID."
+              exit 1
+            fi
+          done
+
+          if [[ ! "$TF_STATE_STORAGE_ACCOUNT" =~ ^[a-z0-9]{3,24}$ ]]; then
+            echo "::error::TF_STATE_STORAGE_ACCOUNT must be a valid lowercase Azure Storage account name."
+            exit 1
+          fi
+
+          if [[ ! "$TF_STATE_CONTAINER" =~ ^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$ ]]; then
+            echo "::error::TF_STATE_CONTAINER must be a valid lowercase Blob container name."
+            exit 1
+          fi
+
+          if [[ ! "$TF_STATE_KEY" =~ ^[a-z0-9][a-z0-9-]{1,30}/prod\.tfstate$ ]]; then
+            echo "::error::TF_STATE_KEY must use the workload/prod.tfstate form and must not contain traversal characters."
+            exit 1
+          fi
+
+          if [[ ! "$TF_VAR_unique_suffix" =~ ^[a-z0-9]{3,8}$ ]]; then
+            echo "::error::TF_VAR_unique_suffix must contain 3-8 lowercase letters or digits."
+            exit 1
+          fi
+
+          if [[ ! "$TF_VAR_superadmin_email" =~ ^[^@[:space:]]+@[^@[:space:]]+\.[^@[:space:]]+$ ]]; then
+            echo "::error::TF_VAR_superadmin_email must be a valid email address."
+            exit 1
+          fi
+
+          if [[ ! "$TF_VAR_database_application_username" =~ ^[A-Za-z][A-Za-z0-9_]{0,31}$ ]]; then
+            echo "::error::TF_VAR_database_application_username must be a valid MySQL identifier of at most 32 characters."
+            exit 1
+          fi
+
+          if (( ${#TF_VAR_database_admin_password} < 12 )); then
+            echo "::error::TF_VAR_database_admin_password must contain at least 12 characters."
+            exit 1
+          fi
+
+          if (( ${#TF_VAR_database_application_password} < 16 )); then
+            echo "::error::TF_VAR_database_application_password must contain at least 16 characters."
+            exit 1
+          fi
+
+          if (( ${#TF_VAR_jwt_secret} < 32 )); then
+            echo "::error::TF_VAR_jwt_secret must contain at least 32 characters."
+            exit 1
+          fi
+
+          if (( ${#TF_VAR_superadmin_password} < 14 )); then
+            echo "::error::TF_VAR_superadmin_password must contain at least 14 characters."
+            exit 1
+          fi
+
+          if [[ "$REQUESTED_OPERATION" == "apply" ]] && (( ${#TF_PLAN_ENCRYPTION_PASSPHRASE} < 32 )); then
+            echo "::error::TF_PLAN_ENCRYPTION_PASSPHRASE must contain at least 32 characters for an apply run."
+            exit 1
+          fi
+
+          if ! jq --exit-status '
+            type == "object" and
+            length > 0 and
+            all(
+              to_entries[];
+              (.key | type == "string" and length > 0) and
+              (.value | type == "string" and test("^[^@[:space:]]+@[^@[:space:]]+\\.[^@[:space:]]+$"))
+            )
+          ' <<< "$TF_VAR_alert_email_receivers" >/dev/null; then
+            echo "::error::TF_VAR_alert_email_receivers must be a non-empty JSON object mapping receiver names to email addresses."
+            exit 1
+          fi
+
+          if [[ -n "${OPTIONAL_STATIC_WEB_APP_LOCATION//[[:space:]]/}" ]]; then
+            case "$OPTIONAL_STATIC_WEB_APP_LOCATION" in
+              "Central US"|"East Asia"|"East US 2"|"West Europe"|"West US 2")
+                printf 'TF_VAR_static_web_app_location=%s\n' "$OPTIONAL_STATIC_WEB_APP_LOCATION" >> "$GITHUB_ENV"
+                ;;
+              *)
+                echo "::error::TF_VAR_static_web_app_location is not an allowed Azure Static Web Apps region."
+                exit 1
+                ;;
+            esac
+          fi
+
+      - name: Sign in to Azure with OpenID Connect
+        uses: azure/login@2dd0bbf4064d5a1812889dc200bb8eed2597f82a # v3
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Initialize the production remote backend
+        shell: bash
+        working-directory: infra/environments/prod
+        env:
+          ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          ARM_USE_AZUREAD: "true"
+          ARM_USE_OIDC: "true"
+          TF_STATE_RESOURCE_GROUP: ${{ vars.TF_STATE_RESOURCE_GROUP }}
+          TF_STATE_STORAGE_ACCOUNT: ${{ vars.TF_STATE_STORAGE_ACCOUNT }}
+          TF_STATE_CONTAINER: ${{ vars.TF_STATE_CONTAINER }}
+          TF_STATE_KEY: ${{ vars.TF_STATE_KEY }}
+        run: |
+          terraform init \
+            -input=false \
+            -reconfigure \
+            -backend-config="resource_group_name=$TF_STATE_RESOURCE_GROUP" \
+            -backend-config="storage_account_name=$TF_STATE_STORAGE_ACCOUNT" \
+            -backend-config="container_name=$TF_STATE_CONTAINER" \
+            -backend-config="key=$TF_STATE_KEY"
+
+      - name: Create production Terraform plan
+        shell: bash
+        working-directory: infra/environments/prod
+        env:
+          ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          ARM_USE_AZUREAD: "true"
+          ARM_USE_OIDC: "true"
+          TF_VAR_subscription_id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          TF_VAR_resource_group_name: ${{ vars.TF_VAR_resource_group_name }}
+          TF_VAR_backend_deploy_principal_object_id: ${{ vars.TF_VAR_backend_deploy_principal_object_id }}
+          TF_VAR_unique_suffix: ${{ vars.TF_VAR_unique_suffix }}
+          TF_VAR_superadmin_email: ${{ vars.TF_VAR_superadmin_email }}
+          TF_VAR_alert_email_receivers: ${{ vars.TF_VAR_alert_email_receivers }}
+          TF_VAR_database_application_username: ${{ vars.TF_VAR_database_application_username }}
+          TF_VAR_database_admin_password: ${{ secrets.TF_VAR_database_admin_password }}
+          TF_VAR_database_application_password: ${{ secrets.TF_VAR_database_application_password }}
+          TF_VAR_jwt_secret: ${{ secrets.TF_VAR_jwt_secret }}
+          TF_VAR_superadmin_password: ${{ secrets.TF_VAR_superadmin_password }}
+        run: |
+          terraform plan \
+            -input=false \
+            -lock-timeout=5m \
+            -no-color \
+            -out=production.tfplan
+
+      - name: Encrypt the apply plan for approval handoff
+        if: inputs.operation == 'apply'
+        shell: bash
+        working-directory: infra/environments/prod
+        env:
+          TF_PLAN_ENCRYPTION_PASSPHRASE: ${{ secrets.TF_PLAN_ENCRYPTION_PASSPHRASE }}
+        run: |
+          sha256sum production.tfplan > production.tfplan.sha256
+          printf '%s' "$TF_PLAN_ENCRYPTION_PASSPHRASE" \
+            | gpg --batch --yes --pinentry-mode loopback \
+                --passphrase-fd 0 \
+                --cipher-algo AES256 \
+                --s2k-digest-algo SHA512 \
+                --symmetric \
+                --output production.tfplan.gpg \
+                production.tfplan
+          shred --remove production.tfplan
+
+      - name: Upload encrypted plan for the gated apply job
+        if: inputs.operation == 'apply'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: swiftpay-production-plan-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            infra/environments/prod/production.tfplan.gpg
+            infra/environments/prod/production.tfplan.sha256
+          if-no-files-found: error
+          retention-days: 1
+
+  production_apply:
+    name: Approve and apply the exact production plan
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.operation == 'apply'
+    needs: production_plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    environment: production-infrastructure
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - name: Check out the planned revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Set up Terraform 1.15.8
+        uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4
+        with:
+          terraform_version: "1.15.8"
+          terraform_wrapper: false
+
+      - name: Validate apply-time secret configuration
+        shell: bash
+        env:
+          TF_PLAN_ENCRYPTION_PASSPHRASE: ${{ secrets.TF_PLAN_ENCRYPTION_PASSPHRASE }}
+          TF_VAR_database_admin_password: ${{ secrets.TF_VAR_database_admin_password }}
+          TF_VAR_database_application_password: ${{ secrets.TF_VAR_database_application_password }}
+          TF_VAR_jwt_secret: ${{ secrets.TF_VAR_jwt_secret }}
+          TF_VAR_superadmin_password: ${{ secrets.TF_VAR_superadmin_password }}
+        run: |
+          if (( ${#TF_PLAN_ENCRYPTION_PASSPHRASE} < 32 )); then
+            echo "::error::TF_PLAN_ENCRYPTION_PASSPHRASE must contain at least 32 characters."
+            exit 1
+          fi
+
+          if (( ${#TF_VAR_database_admin_password} < 12 )) ||
+             (( ${#TF_VAR_database_application_password} < 16 )) ||
+             (( ${#TF_VAR_jwt_secret} < 32 )) ||
+             (( ${#TF_VAR_superadmin_password} < 14 )); then
+            echo "::error::One or more ephemeral Terraform secrets are missing or too short."
+            exit 1
+          fi
+
+      - name: Sign in to Azure with OpenID Connect
+        uses: azure/login@2dd0bbf4064d5a1812889dc200bb8eed2597f82a # v3
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Initialize the production remote backend
+        shell: bash
+        working-directory: infra/environments/prod
+        env:
+          ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          ARM_USE_AZUREAD: "true"
+          ARM_USE_OIDC: "true"
+          TF_STATE_RESOURCE_GROUP: ${{ vars.TF_STATE_RESOURCE_GROUP }}
+          TF_STATE_STORAGE_ACCOUNT: ${{ vars.TF_STATE_STORAGE_ACCOUNT }}
+          TF_STATE_CONTAINER: ${{ vars.TF_STATE_CONTAINER }}
+          TF_STATE_KEY: ${{ vars.TF_STATE_KEY }}
+        run: |
+          terraform init \
+            -input=false \
+            -reconfigure \
+            -backend-config="resource_group_name=$TF_STATE_RESOURCE_GROUP" \
+            -backend-config="storage_account_name=$TF_STATE_STORAGE_ACCOUNT" \
+            -backend-config="container_name=$TF_STATE_CONTAINER" \
+            -backend-config="key=$TF_STATE_KEY"
+
+      - name: Download the encrypted approved plan
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: swiftpay-production-plan-${{ github.run_id }}-${{ github.run_attempt }}
+          path: infra/environments/prod
+
+      - name: Decrypt and verify the approved plan
+        shell: bash
+        working-directory: infra/environments/prod
+        env:
+          TF_PLAN_ENCRYPTION_PASSPHRASE: ${{ secrets.TF_PLAN_ENCRYPTION_PASSPHRASE }}
+        run: |
+          printf '%s' "$TF_PLAN_ENCRYPTION_PASSPHRASE" \
+            | gpg --batch --yes --pinentry-mode loopback \
+                --passphrase-fd 0 \
+                --decrypt \
+                --output production.tfplan \
+                production.tfplan.gpg
+          sha256sum --check production.tfplan.sha256
+          terraform show -no-color production.tfplan
+
+      - name: Apply the identical approved production plan
+        shell: bash
+        working-directory: infra/environments/prod
+        env:
+          ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          ARM_USE_AZUREAD: "true"
+          ARM_USE_OIDC: "true"
+          TF_VAR_subscription_id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          TF_VAR_resource_group_name: ${{ vars.TF_VAR_resource_group_name }}
+          TF_VAR_backend_deploy_principal_object_id: ${{ vars.TF_VAR_backend_deploy_principal_object_id }}
+          TF_VAR_unique_suffix: ${{ vars.TF_VAR_unique_suffix }}
+          TF_VAR_superadmin_email: ${{ vars.TF_VAR_superadmin_email }}
+          TF_VAR_alert_email_receivers: ${{ vars.TF_VAR_alert_email_receivers }}
+          TF_VAR_database_application_username: ${{ vars.TF_VAR_database_application_username }}
+          TF_VAR_database_admin_password: ${{ secrets.TF_VAR_database_admin_password }}
+          TF_VAR_database_application_password: ${{ secrets.TF_VAR_database_application_password }}
+          TF_VAR_jwt_secret: ${{ secrets.TF_VAR_jwt_secret }}
+          TF_VAR_superadmin_password: ${{ secrets.TF_VAR_superadmin_password }}
+        run: terraform apply -input=false -lock-timeout=5m production.tfplan
+
+      - name: Print non-sensitive production outputs
+        shell: bash
+        working-directory: infra/environments/prod
+        env:
+          ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          ARM_USE_AZUREAD: "true"
+          ARM_USE_OIDC: "true"
+        run: |
+          for output_name in \
+            resource_group_name \
+            backend_web_app_name \
+            backend_web_app_url \
+            frontend_url \
+            mysql_application_username \
+            github_environment_variables \
+            frontend_repository_variables \
+            nat_gateway_public_ip; do
+            terraform output -no-color "$output_name"
+          done

@@ -76,7 +76,7 @@ export const useSplitSse = ({ enabled }) => {
      * 
      * So basically SSE sends some event as in the code below that something is changed, we use the invalidation strategy.
      */
-    const invalidate = (splitId) => {
+    const invalidate = () => {
       qc.invalidateQueries({ queryKey: queryKeys.splits.created() });
       qc.invalidateQueries({ queryKey: queryKeys.splits.involved() });
 

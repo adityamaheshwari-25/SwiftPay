@@ -1,0 +1,623 @@
+SWIFTPAY PRODUCTION WORKFLOWS - PERSONAL REFERENCE NOTES
+=========================================================
+
+1. WHY THE PRODUCTION WORKFLOWS HAVE A pull_request TRIGGER
+------------------------------------------------------------
+
+The pull_request trigger is present for pre-merge Continuous Integration (CI) validation.
+It is not present to deploy a pull request to production.
+
+Example from prod-infrastructure.yml:
+
+pull_request:
+  branches:
+    - main
+  paths:
+    - "infra/**"
+    - ".github/workflows/prod-infrastructure.yml"
+
+Meaning of each line:
+
+- pull_request:
+  GitHub starts this workflow in response to matching pull request activity.
+
+- branches: main
+  The filter refers to the target/base branch of the pull request.
+  Therefore, the workflow is eligible when the PR is proposing a merge into main.
+  It does not mean that the source branch must be named main.
+
+- paths: "infra/**"
+  The workflow is triggered only if the pull request changes something under infra/.
+
+- paths: ".github/workflows/prod-infrastructure.yml"
+  The workflow is also triggered if its own workflow definition is changed.
+  This validates workflow-related Terraform behavior before the workflow change enters main.
+
+The path filter only determines whether the workflow starts.
+It does not tell GitHub to test only the changed lines or only the diff.
+
+Why this is useful:
+
+1. A developer changes code or Terraform on a feature branch.
+2. The developer opens a PR targeting main.
+3. GitHub automatically checks the proposed repository state.
+4. A failure appears directly on the PR before the code is merged.
+5. If branch protection requires that check, GitHub blocks the merge until it passes.
+6. Production deployment remains a separate, deliberately protected action.
+
+This prevents broken Terraform, backend code, frontend code, or workflow definitions from being merged unnoticed.
+
+
+2. EXACT PR BEHAVIOR OF prod-infrastructure.yml
+------------------------------------------------
+
+On a matching pull request, only the validate job runs.
+
+The validate job performs:
+
+- terraform fmt -check -recursive infra
+  Checks that all Terraform files under infra/ use the expected Terraform formatting.
+
+- terraform -chdir=infra/bootstrap init -backend=false -input=false
+  Downloads/initializes what is needed to validate bootstrap, but deliberately does not connect to its real state backend.
+
+- terraform -chdir=infra/bootstrap validate -no-color
+  Checks the bootstrap Terraform configuration for syntax and internal configuration errors.
+
+- terraform -chdir=infra/environments/prod init -backend=false -input=false
+  Initializes the production configuration for validation without connecting to the production remote state.
+
+- terraform -chdir=infra/environments/prod validate -no-color
+  Checks the production Terraform configuration for syntax and internal configuration errors.
+
+The production_plan job does not run on a PR because it has this condition:
+
+github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
+
+That means the production plan runs only when somebody manually starts the workflow from main.
+
+The production_apply job also does not run on a PR because it requires:
+
+- a workflow_dispatch event;
+- the main branch;
+- operation == apply;
+- successful completion of production_plan; and
+- any configured production-infrastructure environment approval.
+
+Therefore, an infrastructure PR does not authenticate to Azure, does not read the live production state, does not create a production plan, and does not change Azure resources.
+
+Important limitation:
+terraform validate checks configuration validity, but it is not the same as a real terraform plan.
+Some provider, permission, remote-state, API, quota, and live-infrastructure problems can be discovered only during a real plan or apply.
+
+
+3. EXACT PR BEHAVIOR OF prod-backend.yml
+-----------------------------------------
+
+The backend PR trigger applies when a PR targets main and changes:
+
+- PaytmCloneBackend/**; or
+- .github/workflows/prod-backend.yml.
+
+For a matching PR, the build job checks out the proposed code, sets up Java 17, and runs:
+
+./mvnw --batch-mode --no-transfer-progress clean verify
+
+This compiles the Spring Boot backend, runs its tests and verification lifecycle, and packages it as part of Maven verification.
+
+For a pull request, these later steps are deliberately skipped:
+
+- selecting/copying the deployable JAR;
+- uploading the deployable JAR as a GitHub Actions artifact; and
+- deploying to the Azure App Service production environment.
+
+The deploy job allows only:
+
+- a published non-prerelease GitHub Release; or
+- a manual workflow_dispatch run from main.
+
+Therefore, a backend PR tests the proposed backend but does not deploy it.
+
+
+4. EXACT PR BEHAVIOR OF prod-frontend.yml
+------------------------------------------
+
+The frontend PR trigger applies when a PR targets main and changes:
+
+- PaytmCloneFrontend/**; or
+- .github/workflows/prod-frontend.yml.
+
+For a matching PR, the build job:
+
+1. Checks out the proposed repository revision.
+2. Sets up Node.js 22.
+3. Runs npm ci to install the exact dependencies from package-lock.json.
+4. Runs npm run lint, which runs ESLint against the frontend project.
+5. Validates the configured production API URL.
+6. Runs npm run build, which runs vite build.
+7. Runs scripts/prepare-production-artifact.mjs to restrict the Content Security Policy and stamp the build with the commit SHA.
+
+For a PR, the generated frontend output is not uploaded as an Actions artifact because the upload step has:
+
+if: github.event_name != 'pull_request'
+
+The production deploy job is also skipped for PRs.
+It allows only a published non-prerelease GitHub Release or a manual run from main.
+
+Therefore, the PR proves that the proposed frontend can lint and produce a production-style build, without deploying that build.
+
+
+5. WHICH CODE IS TESTED FOR A PULL REQUEST?
+--------------------------------------------
+
+CI does not execute installation, linting, tests, or builds against only the changed lines.
+It operates on a complete checked-out repository snapshot.
+
+For a pull_request workflow, GitHub normally supplies a PR test revision representing the PR changes in the context of the target branch, commonly a synthetic merge revision for the PR.
+This allows CI to detect whether the proposed changes work together with the current main branch.
+
+Example:
+
+- A developer changes one React component.
+- The paths filter notices that PaytmCloneFrontend/** changed and starts prod-frontend.yml.
+- npm ci installs the dependencies for the complete frontend project.
+- ESLint checks the complete scope configured by npm run lint (currently eslint .).
+- Vite builds the complete frontend application.
+
+Consequently:
+
+- paths decides whether the workflow starts;
+- the diff identifies what changed for PR review;
+- the CI commands operate on the complete checked-out project/repository state relevant to those commands.
+
+This is important because one changed line can break another file, an import, compilation, tests, or the complete application build.
+
+
+6. WHAT release AND types: published MEAN
+------------------------------------------
+
+The following trigger appears in prod-backend.yml and prod-frontend.yml:
+
+release:
+  types:
+    - published
+
+A Git tag and a GitHub Release are related but are not exactly the same thing.
+
+- A Git tag identifies a particular commit, for example v1.2.3.
+- A GitHub Release is a release record in GitHub associated with a tag.
+- A release can initially be saved as a draft.
+- Publishing the release makes it visible as a published GitHub Release.
+
+The published activity type means:
+Start the workflow when a GitHub Release is published.
+Merely pushing normal commits does not trigger this release event.
+Merely keeping a release as a draft does not trigger the published event.
+
+Typical release sequence:
+
+1. Approved changes are merged into main.
+2. A version tag such as v1.2.3 identifies the release commit.
+3. A GitHub Release is created for that tag.
+4. The release is published.
+5. GitHub emits the release/published event.
+6. The backend and frontend production workflows start.
+
+Repository-specific checks then occur:
+
+- The tag must match the stable vMAJOR.MINOR.PATCH pattern, such as v1.2.3.
+- The tagged commit must be reachable from the protected main branch.
+- The backend runs Maven clean verify and prepares a JAR.
+- The frontend runs npm ci, lint, production configuration validation, Vite build, and artifact preparation.
+- The generated backend/frontend artifact is uploaded for the deploy job.
+- Deployment runs only when github.event.release.prerelease == false.
+
+A release marked as a prerelease can still produce a published release event, but these workflows explicitly prevent the deploy job from running when prerelease is true.
+Also note that a prerelease tag such as v1.2.3-rc.1 would fail this repository's strict vMAJOR.MINOR.PATCH validation.
+
+The infrastructure workflow does not have a release trigger.
+Infrastructure plan/apply is controlled through workflow_dispatch instead.
+
+
+7. WHAT ARTIFACT UPLOAD MEANS
+------------------------------
+
+An artifact is a generated file or directory produced by a workflow job.
+It is an output of the build/plan process, not the original source code.
+
+GitHub-hosted jobs normally run on separate temporary runners.
+Files created in one job are not automatically available in another job.
+The actions/upload-artifact action stores selected generated files in GitHub Actions storage so another job can download and use the exact same output.
+
+This provides a build-once/deploy-the-same-output flow:
+
+1. The build or plan job creates output.
+2. The job uploads that output as an artifact.
+3. A later deploy/apply job downloads it.
+4. The later job deploys/applies the exact output that passed the earlier checks.
+
+Artifacts in these workflows:
+
+Backend artifact:
+
+- File: PaytmCloneBackend/deployment/swiftpay-backend.jar
+- Artifact name: swiftpay-backend-${github.sha}
+- Retention: 14 days
+- The deploy job downloads this JAR and deploys it to the App Service staging slot.
+
+Frontend artifact:
+
+- Directory: PaytmCloneFrontend/dist
+- Artifact name: swiftpay-prod-frontend-${github.sha}
+- Retention: 14 days
+- The deploy job downloads this directory and deploys the prebuilt static application to Azure Static Web Apps.
+
+Infrastructure artifact:
+
+- Files: encrypted production.tfplan.gpg and production.tfplan.sha256
+- Retention: 1 day
+- The apply job downloads, decrypts, verifies, and applies the exact reviewed Terraform plan.
+
+An Actions artifact is not automatically the same as a GitHub Release asset.
+Here it is primarily an internal handoff between jobs in a workflow run.
+
+
+8. WHAT THE FRONTEND PRODUCTION ARTIFACT IS
+--------------------------------------------
+
+The frontend uses Vite.
+The package.json build script is:
+
+"build": "vite build"
+
+Vite compiles and bundles the React application into:
+
+PaytmCloneFrontend/dist
+
+That dist directory is the frontend production artifact.
+It contains the deployable static website output, such as generated HTML, bundled/minified JavaScript, CSS, assets, and the Static Web Apps configuration.
+It is the generated deployable application rather than the original React source files.
+
+After Vite builds dist, prepare-production-artifact.mjs:
+
+- reads dist/staticwebapp.config.json;
+- narrows the Content-Security-Policy connect-src value to the configured production API origin;
+- creates dist/deployment.json containing the commit SHA; and
+- leaves dist ready for controlled production deployment.
+
+On a PR, dist is generated to prove that the proposed application can build successfully, but it is not uploaded and is not deployed.
+On a release or valid manual production run, dist is uploaded so the separate deploy job can download and deploy that exact prebuilt directory.
+
+
+9. IF TERRAFORM VALIDATION FAILS, DOES THE PIPELINE BREAK?
+-----------------------------------------------------------
+
+YES.
+
+More precisely:
+
+- The failing command returns a non-zero exit code.
+- The validate job is marked failed.
+- The overall workflow run is marked failed.
+- production_plan has needs: validate, so it cannot proceed after validation failure.
+- production_apply depends on production_plan, so it cannot proceed either.
+
+For a pull request, GitHub displays the failed check on the PR.
+If repository branch protection/rulesets require this workflow check, the PR cannot be merged until the failure is fixed and the check passes.
+If the check is not configured as required, the workflow still fails, but GitHub may still allow an authorized user to merge.
+Therefore, workflow failure and merge blocking are related but not automatically identical; merge blocking depends on repository branch protection/ruleset settings.
+
+
+10. IS prod-infrastructure.yml A CI/CD PIPELINE?
+-------------------------------------------------
+
+YES.
+
+It is an Infrastructure-as-Code CI/CD pipeline, although its deployment is deliberately manual and approval-gated rather than automatic on every merge.
+
+Its CI responsibilities include:
+
+- checking Terraform formatting;
+- initializing without the backend for safe validation;
+- validating bootstrap Terraform; and
+- validating production Terraform on matching pull requests.
+
+Its CD responsibilities include:
+
+- manually creating a real production Terraform plan from main;
+- authenticating to Azure through OIDC;
+- reading the production remote state;
+- encrypting and uploading the reviewed plan;
+- waiting for the protected production-infrastructure approval gate; and
+- applying the exact approved plan when operation == apply.
+
+Therefore:
+
+- prod-backend.yml is application CI/CD for the Spring Boot backend;
+- prod-frontend.yml is application CI/CD for the React/Vite frontend;
+- prod-infrastructure.yml is infrastructure CI/CD for Azure resources managed through Terraform.
+
+CD does not have to mean an uncontrolled automatic deployment after every merge.
+A manually triggered and approval-gated production deployment is still a Continuous Delivery pipeline because the validated system remains deployable through a controlled workflow.
+It is closer to Continuous Delivery than fully automatic Continuous Deployment.
+
+
+11. QUICK EVENT SUMMARY
+------------------------
+
+pull_request targeting main:
+
+- Infrastructure: format and validate only; no Azure plan/apply.
+- Backend: compile/test/package through Maven verification; no artifact upload or deployment.
+- Frontend: install, lint, validate configuration, build and prepare dist; no artifact upload or deployment.
+
+workflow_dispatch from main:
+
+- Infrastructure: manually select plan or apply; apply uses the reviewed encrypted plan and approval gates.
+- Backend: build, upload JAR, and deploy through the staging slot.
+- Frontend: build, upload dist, and deploy to Static Web Apps.
+
+release with type published:
+
+- Backend and frontend workflows run against the release revision/tag.
+- They verify the stable tag and that the release commit belongs to main history.
+- They build and upload their deployable artifacts.
+- They deploy only if the published release is not marked as a prerelease.
+- The infrastructure workflow is not triggered by a release.
+
+
+12. ALL GITHUB ACTIONS release ACTIVITY TYPES
+----------------------------------------------
+
+GitHub currently supports these activity types for the release event:
+
+- created
+- edited
+- deleted
+- prereleased
+- published
+- released
+- unpublished
+
+The types keyword limits which release activities start the workflow.
+
+Example used by this repository:
+
+release:
+  types:
+    - published
+
+This means only the published release activity starts the workflow.
+If types is omitted from a release trigger, all supported release activity types can trigger it, subject to GitHub's documented draft-release limitations.
+
+Meaning of each release activity type:
+
+1. created
+
+   A release record is created.
+   This can relate to creating/saving a release rather than making it generally available as a published release.
+   GitHub Actions does not trigger created workflows for draft releases.
+
+2. edited
+
+   An existing release's information is changed, for example its title, description/release notes, or other release metadata.
+   GitHub Actions does not trigger edited workflows for draft releases.
+
+3. deleted
+
+   A release record is deleted.
+   Deleting a GitHub Release and deleting its underlying Git tag are separate concepts unless the user explicitly deletes both.
+   GitHub Actions does not trigger deleted workflows for draft releases.
+
+4. prereleased
+
+   A release is published as a prerelease, meaning it is marked as not yet a normal stable production release.
+   GitHub documents an important caveat: prereleased does not trigger when a prerelease is published from an existing draft.
+   Use published when a workflow must catch the publication of both stable releases and prereleases.
+
+5. published
+
+   A release or prerelease is published and becomes publicly available as a GitHub Release.
+   This catches both stable and prerelease publication, including publication from a draft.
+   This is why the current frontend and backend workflows subscribe to published and then separately inspect github.event.release.prerelease.
+
+6. released
+
+   A normal/full release is published rather than a prerelease.
+   Use this when the workflow is interested specifically in stable release publication.
+
+7. unpublished
+
+   A previously published release is made unpublished, normally by changing it back to draft status.
+
+Official GitHub reference:
+https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#release
+
+Important repository-specific behavior:
+
+- prod-backend.yml and prod-frontend.yml subscribe only to published.
+- Because published includes prereleases, their build jobs can start for a published prerelease.
+- Their deploy jobs add github.event.release.prerelease == false.
+- Therefore, only a published stable release is allowed to deploy.
+- Their strict tag check also requires vMAJOR.MINOR.PATCH, for example v1.2.3.
+- A tag such as v1.2.3-rc.1 fails that strict pattern even if GitHub marks it as a prerelease.
+
+
+13. WHERE THE TERRAFORM PLAN IS UPLOADED
+-----------------------------------------
+
+The production infrastructure plan is uploaded to GitHub Actions artifact storage.
+It is not uploaded to the Git repository, a GitHub Release, or the Azure Terraform-state container.
+
+The plan and Terraform state are different:
+
+- Terraform state is long-lived and stored in the Azure Blob backend created by bootstrap.
+- The Terraform plan is temporary and is stored as an encrypted GitHub Actions artifact for the apply handoff.
+
+Exact sequence in prod-infrastructure.yml when operation == apply:
+
+1. Terraform creates this local runner file:
+
+   infra/environments/prod/production.tfplan
+
+2. The workflow creates its SHA-256 checksum:
+
+   infra/environments/prod/production.tfplan.sha256
+
+3. The workflow encrypts the plan with GPG/AES256 and creates:
+
+   infra/environments/prod/production.tfplan.gpg
+
+4. The workflow shreds/removes the unencrypted production.tfplan from the plan runner.
+
+5. actions/upload-artifact uploads these two files to GitHub Actions artifact storage:
+
+   - production.tfplan.gpg
+   - production.tfplan.sha256
+
+6. The artifact is named:
+
+   swiftpay-production-plan-${github.run_id}-${github.run_attempt}
+
+7. The artifact retention period is one day.
+
+8. After the production-infrastructure approval gate, the production_apply job runs on a separate runner.
+
+9. actions/download-artifact downloads the named artifact into:
+
+   infra/environments/prod
+
+10. The apply job decrypts production.tfplan.gpg, checks production.tfplan.sha256, displays the plan, and executes:
+
+    terraform apply production.tfplan
+
+Why github.run_id and github.run_attempt are used in the artifact name:
+
+- github.run_id identifies the particular workflow run.
+- github.run_attempt distinguishes a rerun attempt of that workflow run.
+- Together they prevent the apply job from accidentally selecting a plan from another run or attempt.
+
+The artifact is an internal, temporary, encrypted handoff between production_plan and production_apply.
+
+
+14. CONTINUOUS DELIVERY VS AUTOMATIC CONTINUOUS DEPLOYMENT
+-----------------------------------------------------------
+
+Continuous Delivery and Continuous Deployment both start with strong automation, but they differ at the final production-release decision.
+
+Continuous Delivery:
+
+- Every change is automatically built, tested, and validated.
+- The software or infrastructure is kept in a deployable state.
+- Production deployment requires a deliberate human action, approval, or business decision.
+- A person may click a manual workflow button, publish an approved release, or approve a protected environment.
+
+Automatic Continuous Deployment:
+
+- Every change that passes all automated checks is automatically deployed to production.
+- There is no manual approval between successful validation and production deployment.
+- Humans still define safeguards and can respond or roll back, but they do not approve every normal production promotion.
+
+Simple comparison:
+
+- Continuous Delivery: automatically prepare; manually approve/promote to production.
+- Continuous Deployment: automatically prepare and automatically deploy to production.
+
+This repository is closer to Continuous Delivery:
+
+- Terraform production plan/apply is started manually with workflow_dispatch.
+- Applying uses the protected production-infrastructure environment and its configured approval gate.
+- Backend/frontend deployment happens through a published stable release or a deliberate manual run from main.
+- Therefore, passing a PR check alone does not immediately deploy that PR to production.
+
+
+15. WHAT COMPLETE CHECKED-OUT PROJECT STATE MEANS
+--------------------------------------------------
+
+A Git commit represents a snapshot of all tracked files in the repository at that revision.
+When actions/checkout runs, it places the files from the selected revision into the GitHub runner's working directory.
+That working directory is called the checked-out working tree.
+
+Complete checked-out project state means:
+
+- the runner receives the tracked files belonging to the selected commit/revision;
+- the runner does not receive only the lines shown as added or changed in the PR diff;
+- CI commands see complete files and can follow imports and dependencies across the project; and
+- each command still operates only on the scope specified by that command and its working-directory.
+
+It does not necessarily mean the complete Git history:
+
+- A checkout can contain the complete file tree while having only shallow Git history.
+- The backend/frontend release checks request fetch-depth: 0 because they need full history to verify that the release commit is reachable from main.
+- The infrastructure workflow does not need full history for Terraform formatting and validation.
+
+PR example:
+
+Suppose main contains files A, B, and C, and a feature branch changes only file B.
+The PR diff primarily displays the change to B.
+The runner still checks out a project snapshot containing A, the proposed version of B, and C.
+The build can therefore discover that the change to B breaks an import or behavior in A or C.
+
+For pull_request events, GitHub normally sets github.sha to the PR's test/merge commit on refs/pull/<number>/merge.
+This is a synthetic commit representing the PR changes combined with the current target branch.
+Therefore, the check answers a useful question: would the proposed PR work when integrated with the current main branch?
+
+The paths filter and checkout have different responsibilities:
+
+- paths checks the PR's changed paths to decide whether the workflow should start.
+- actions/checkout obtains the selected complete tracked-file snapshot after the workflow starts.
+- npm, Maven, ESLint, Vite, and Terraform then operate on that checked-out state according to their command and working directory.
+
+
+16. WHAT github.sha AND GITHUB_SHA MEAN
+----------------------------------------
+
+SHA means Secure Hash Algorithm.
+Git uses a commit hash as a unique identifier for a specific commit and therefore a specific tracked-file snapshot.
+A familiar Git commit SHA looks like this:
+
+3f8c1d2a4b5e6f78901234567890abcdef123456
+
+The full value is used when an exact, unambiguous revision is important.
+
+GitHub Actions exposes the event's commit identifier in two closely related forms:
+
+- github.sha is a value in the GitHub Actions expression/context syntax, used inside ${{ ... }}.
+- GITHUB_SHA is the default environment variable available to scripts running on the runner.
+
+The exact commit represented depends on the event:
+
+- pull_request: normally the PR test/merge commit associated with refs/pull/<number>/merge.
+- workflow_dispatch on main: the commit selected for that manual run, normally the current selected main commit.
+- release: the commit pointed to by the release's Git tag.
+
+How this repository uses it:
+
+1. Exact checkout
+
+   prod-infrastructure.yml uses ref: ${{ github.sha }} so validation, plan, and apply jobs check out the exact event revision.
+
+2. Artifact identity
+
+   The backend artifact is named swiftpay-backend-${github.sha}.
+   The frontend artifact is named swiftpay-prod-frontend-${github.sha}.
+   The deploy job uses the same name to download the artifact built for that exact revision.
+
+3. Frontend deployment stamp
+
+   prepare-production-artifact.mjs writes GITHUB_SHA into dist/deployment.json.
+   After deployment, the frontend workflow reads deployment.json from the production site and compares its sha with GITHUB_SHA.
+   This verifies that the expected commit's artifact actually reached the expected Static Web App.
+
+Why a SHA is better than only a branch name:
+
+- main can move when new commits are added.
+- A SHA identifies one exact immutable commit.
+- It improves traceability: a deployed artifact can be connected to its source revision.
+- It prevents one workflow job from accidentally deploying an artifact created from a different commit.
+
+Do not confuse these identifiers:
+
+- github.sha identifies a commit/revision.
+- github.run_id identifies a GitHub Actions workflow run.
+- github.run_attempt identifies which attempt/rerun of that workflow run is executing.

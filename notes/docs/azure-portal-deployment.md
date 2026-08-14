@@ -1,5 +1,13 @@
 # Azure Portal deployment runbook
 
+> **Scope notice:** this is the original portal-led development deployment
+> runbook. Production is now defined by Terraform; use
+> [production-terraform-runbook.md](production-terraform-runbook.md). To add a
+> VNet to the existing dev resources through Azure Portal, use
+> [dev-vnet-portal-guide.md](dev-vnet-portal-guide.md). Where this older document
+> describes a future/manual production setup, the Terraform runbook takes
+> precedence.
+
 This runbook deploys the application into one Azure subscription with isolated
 development and production resource groups.
 

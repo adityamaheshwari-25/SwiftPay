@@ -1,0 +1,18 @@
+subscription_id = "00000000-0000-0000-0000-000000000000"
+location        = "Central India"
+name_prefix     = "swiftpay"
+environment     = "prod"
+unique_suffix   = "a1b2c3"
+
+# These values are case-sensitive in the GitHub OIDC subject. They match this
+# repository's current origin: git@github.com:adityamaheshwari-25/SwiftPay.git.
+github_organization = "adityamaheshwari-25"
+github_repository   = "SwiftPay"
+terraform_github_environment = "production-infrastructure"
+deploy_github_environment    = "production"
+
+tags = {
+  owner       = "platform-team"
+  cost-centre = "swiftpay"
+  criticality = "high"
+}

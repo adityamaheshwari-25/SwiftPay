@@ -1,0 +1,225 @@
+name: Prod frontend CI/CD
+
+on:
+  release:
+    types:
+      - published
+  workflow_dispatch:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "PaytmCloneFrontend/**"
+      - ".github/workflows/prod-frontend.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.event_name == 'pull_request' && format('swiftpay-frontend-pr-{0}', github.event.pull_request.number) || 'swiftpay-production-mutation' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  reject_invalid_manual_ref:
+    name: Reject non-main manual production run
+    if: ${{ github.event_name == 'workflow_dispatch' && github.ref != 'refs/heads/main' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Reject unsupported ref
+        run: |
+          echo "::error::Manual production frontend deployments may only run from main."
+          exit 1
+
+  build:
+    name: Lint and build frontend
+    if: ${{ github.event_name != 'workflow_dispatch' || github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Check out the event revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.event_name == 'release' && github.event.release.tag_name || github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Verify stable release tag is reachable from main
+        if: ${{ github.event_name == 'release' }}
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          if [[ ! "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::Production release tags must use the stable vMAJOR.MINOR.PATCH format."
+            exit 1
+          fi
+
+          if ! git show-ref --verify --quiet refs/remotes/origin/main; then
+            echo "::error::The full checkout did not contain origin/main."
+            exit 1
+          fi
+          release_commit="$(git rev-parse 'HEAD^{commit}')"
+          if ! git merge-base --is-ancestor "$release_commit" origin/main; then
+            echo "::error::Release $RELEASE_TAG is not reachable from the protected main branch."
+            exit 1
+          fi
+
+      - name: Set up Node.js 22
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: PaytmCloneFrontend/package-lock.json
+
+      - name: Install frontend dependencies
+        run: npm ci
+        working-directory: PaytmCloneFrontend
+
+      - name: Lint frontend
+        run: npm run lint
+        working-directory: PaytmCloneFrontend
+
+      - name: Validate production configuration
+        shell: bash
+        env:
+          VITE_API_BASE_URL: ${{ vars.PRODUCTION_API_BASE_URL }}
+        run: |
+          node <<'NODE'
+          const configuredValue = process.env.VITE_API_BASE_URL;
+          const value = configuredValue?.trim();
+
+          if (!value) {
+            throw new Error("PRODUCTION_API_BASE_URL is not configured as a repository variable.");
+          }
+
+          if (configuredValue !== value) {
+            throw new Error("PRODUCTION_API_BASE_URL must not contain leading or trailing whitespace.");
+          }
+
+          let url;
+          try {
+            url = new URL(value);
+          } catch {
+            throw new Error("PRODUCTION_API_BASE_URL must be a valid absolute URL.");
+          }
+
+          if (
+            url.protocol !== "https:" ||
+            !url.hostname ||
+            url.username ||
+            url.password ||
+            url.search ||
+            url.hash ||
+            url.pathname !== "/api/v1"
+          ) {
+            throw new Error(
+              "PRODUCTION_API_BASE_URL must use HTTPS and end exactly in /api/v1, without credentials, a query string, a fragment, or a trailing slash.",
+            );
+          }
+
+          console.log(`Validated production API URL: ${url.origin}${url.pathname}`);
+          NODE
+
+      - name: Build React application
+        run: npm run build
+        working-directory: PaytmCloneFrontend
+        env:
+          VITE_API_BASE_URL: ${{ vars.PRODUCTION_API_BASE_URL }}
+          VITE_APP_NAME: SwiftPay
+
+      - name: Restrict production CSP and stamp the artifact
+        working-directory: PaytmCloneFrontend
+        env:
+          VITE_API_BASE_URL: ${{ vars.PRODUCTION_API_BASE_URL }}
+        run: node scripts/prepare-production-artifact.mjs
+
+      - name: Upload the production frontend artifact
+        if: ${{ github.event_name != 'pull_request' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: swiftpay-prod-frontend-${{ github.sha }}
+          path: PaytmCloneFrontend/dist
+          if-no-files-found: error
+          retention-days: 14
+
+  deploy:
+    name: Deploy frontend to production
+    if: >-
+      ${{
+        (github.event_name == 'release' && github.event.release.prerelease == false) ||
+        (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')
+      }}
+    needs: build
+    runs-on: ubuntu-latest
+    environment: production
+    timeout-minutes: 10
+
+    steps:
+      - name: Download the verified frontend artifact
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: swiftpay-prod-frontend-${{ github.sha }}
+          path: PaytmCloneFrontend/dist
+
+      - name: Validate production deployment token
+        shell: bash
+        env:
+          SWA_DEPLOYMENT_TOKEN: ${{ secrets.AZURE_STATIC_WEB_APPS_API_TOKEN }}
+          PRODUCTION_FRONTEND_URL: ${{ vars.PRODUCTION_FRONTEND_URL }}
+        run: |
+          if [[ -z "$SWA_DEPLOYMENT_TOKEN" ]]; then
+            echo "::error::AZURE_STATIC_WEB_APPS_API_TOKEN is not configured in the production environment."
+            exit 1
+          fi
+
+          node <<'NODE'
+          const configuredValue = process.env.PRODUCTION_FRONTEND_URL;
+          const value = configuredValue?.trim();
+
+          if (!value || value !== configuredValue) {
+            throw new Error("PRODUCTION_FRONTEND_URL must be configured without surrounding whitespace.");
+          }
+
+          const url = new URL(value);
+          if (url.protocol !== "https:" || value !== url.origin) {
+            throw new Error("PRODUCTION_FRONTEND_URL must be an exact HTTPS origin without a trailing slash or path.");
+          }
+          NODE
+
+      - name: Deploy prebuilt application to the production Static Web App
+        uses: Azure/static-web-apps-deploy@1a947af9992250f3bc2e68ad0754c0b0c11566c9 # v1
+        with:
+          azure_static_web_apps_api_token: ${{ secrets.AZURE_STATIC_WEB_APPS_API_TOKEN }}
+          action: upload
+          app_location: PaytmCloneFrontend/dist
+          api_location: ""
+          output_location: ""
+          skip_app_build: true
+          skip_api_build: true
+
+      - name: Verify the expected Static Web App received this artifact
+        shell: bash
+        env:
+          PRODUCTION_FRONTEND_URL: ${{ vars.PRODUCTION_FRONTEND_URL }}
+        run: |
+          for attempt in {1..20}; do
+            deployed_sha="$(
+              curl --silent --show-error \
+                --connect-timeout 5 \
+                --max-time 10 \
+                "${PRODUCTION_FRONTEND_URL}/deployment.json?run=${GITHUB_RUN_ID}" \
+                | jq --raw-output '.sha // empty' 2>/dev/null || true
+            )"
+
+            if [[ "$deployed_sha" == "$GITHUB_SHA" ]]; then
+              echo "Verified deployment $GITHUB_SHA at $PRODUCTION_FRONTEND_URL."
+              exit 0
+            fi
+
+            echo "Waiting for the expected frontend deployment (attempt $attempt/20)..."
+            sleep 5
+          done
+
+          echo "::error::The expected Static Web App did not expose deployment $GITHUB_SHA. Check the deployment token/resource mapping."
+          exit 1

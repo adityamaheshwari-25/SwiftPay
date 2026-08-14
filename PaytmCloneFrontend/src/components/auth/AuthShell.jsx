@@ -1,4 +1,4 @@
-import { motion, useReducedMotion } from "framer-motion";
+import { motion as Motion, useReducedMotion } from "framer-motion";
 import { ArrowLeft, Wallet } from "lucide-react";
 
 export const AuthShell = ({
@@ -24,7 +24,7 @@ export const AuthShell = ({
       <div className="auth-bg-shape auth-bg-shape-two" aria-hidden />
       <div className="auth-bg-shape auth-bg-shape-three" aria-hidden />
 
-      <motion.div
+      <Motion.div
         initial={reduceMotion ? false : { opacity: 0, y: 20, scale: 0.98 }}
         animate={
           reduceMotion
@@ -60,7 +60,7 @@ export const AuthShell = ({
                 </div>
               </div>
 
-              <motion.div
+              <Motion.div
                 initial={reduceMotion ? false : { opacity: 0, x: panelOnLeft ? -12 : 12 }}
                 animate={reduceMotion ? {} : { opacity: 1, x: 0 }}
                 transition={{ ...baseTransition, delay: reduceMotion ? 0 : 0.1 }}
@@ -70,20 +70,20 @@ export const AuthShell = ({
                 <button type="button" onClick={onPanelAction} className="auth-panel-cta">
                   {panelActionLabel}
                 </button>
-              </motion.div>
+              </Motion.div>
             </div>
           </aside>
 
           <section className={`auth-content ${panelOnLeft ? "lg:order-2" : "lg:order-1"}`}>
             <div className="auth-content-inner">
-              <motion.div
+              <Motion.div
                 initial={reduceMotion ? false : { opacity: 0, y: 8 }}
                 animate={reduceMotion ? {} : { opacity: 1, y: 0 }}
                 transition={{ ...baseTransition, delay: reduceMotion ? 0 : 0.07 }}
               >
                 <h1 className="auth-heading">{title}</h1>
                 <p className="auth-subheading">{subtitle}</p>
-              </motion.div>
+              </Motion.div>
 
               {children}
               {footer}
@@ -95,7 +95,7 @@ export const AuthShell = ({
           <ArrowLeft className="h-4 w-4" />
           {backLabel}
         </button>
-      </motion.div>
+      </Motion.div>
     </div>
   );
 };

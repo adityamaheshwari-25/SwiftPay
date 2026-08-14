@@ -1,0 +1,13 @@
+resource_group_name  = "rg-swiftpay-tfstate-a1b2c3"
+storage_account_name = "sttfa1b2c3swiftpayprod"
+container_name       = "tfstate"
+key                  = "swiftpay/prod.tfstate"
+
+use_azuread_auth = true
+
+tenant_id       = "00000000-0000-0000-0000-000000000000"
+subscription_id = "00000000-0000-0000-0000-000000000000"
+
+# This file is for a human who authenticated with `az login`. GitHub Actions
+# must instead use backend.oidc.hcl.example (or equivalent -backend-config
+# arguments) so it exchanges the workflow's OIDC token.

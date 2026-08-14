@@ -4,6 +4,42 @@ import { bankAccountService } from "@/services/api/bankAccountService";
 import { queryKeys } from "./queryKeys";
 import { toast } from "sonner";
 
+const useOptimisticWalletMutation = (
+  queryClient,
+  mutationFn,
+  balanceModifier,
+  successMsg,
+) => useMutation({
+  mutationFn,
+  onMutate: async (variables) => {
+    await queryClient.cancelQueries({ queryKey: queryKeys.user.dashboard() });
+
+    const previousDashboard = queryClient.getQueryData(queryKeys.user.dashboard());
+
+    if (previousDashboard) {
+      queryClient.setQueryData(queryKeys.user.dashboard(), {
+        ...previousDashboard,
+        wallet: {
+          ...previousDashboard.wallet,
+          balance: balanceModifier(previousDashboard.wallet.balance, variables.amount),
+        },
+      });
+    }
+
+    return { previousDashboard };
+  },
+  onError: (err, variables, context) => {
+    queryClient.setQueryData(queryKeys.user.dashboard(), context.previousDashboard);
+    toast.error(err.response?.data?.message || "Transaction failed");
+  },
+  onSettled: () => {
+    queryClient.invalidateQueries({ queryKey: queryKeys.user.dashboard() });
+  },
+  onSuccess: () => {
+    toast.success(successMsg);
+  },
+});
+
 export const useWalletActions = () => {
   const queryClient = useQueryClient();
 
@@ -58,80 +94,25 @@ export const useWalletActions = () => {
       state for rollback, cancel in-flight queries to prevent race conditions, and prepare mutation context.
    * 
    */
-  const createOptimisticMutation = (mutationFn, balanceModifier, successMsg) => {
-    return useMutation({
-      mutationFn,
-      onMutate: async (variables) => { // variables is the input you pass when you call the mutation.
-        /**
-         * 
-         * Cancel outgoing fetches so they don't overwrite our optimistic update, because if any fetching happens, it gonna
-         * send outdated data(stale fetch) because till now we haven't called the mutationFn which gonna fetch the correct upto date value.
-         */
-        
-        await queryClient.cancelQueries({ queryKey: queryKeys.user.dashboard() });
-
-        /**
-         * we are keeping previousDashboard before changing the cache so that if the update doesn't happens properly, then
-         * we can roll back basically set the previousDashboard only in onError function.
-         * This is the heart of optimistic updates.
-         * 
-         * context is the thing returned by onMutate function.
-         */
-        const previousDashboard = queryClient.getQueryData(queryKeys.user.dashboard());
-
-        // Optimistically update the cache
-        if (previousDashboard) {
-
-          // directly setting the cache value
-          queryClient.setQueryData(queryKeys.user.dashboard(), {
-            ...previousDashboard,
-            wallet: {
-              ...previousDashboard.wallet,
-              balance: balanceModifier(previousDashboard.wallet.balance, variables.amount),
-            },
-          });
-        }
-
-        /**
-         * React Query stores it and passes it to onError / onSettled later as context.
-         * we return previousDashboard so that React Query can store that in the context.
-         * */ 
-        return { previousDashboard };
-      },
-      onError: (err, variables, context) => {
-        // Roll back to the previous state if the API fails
-        queryClient.setQueryData(queryKeys.user.dashboard(), context.previousDashboard);
-        toast.error(err.response?.data?.message || "Transaction failed");
-      },
-      /*
-        This runs after success or error, 
-      */
-      onSettled: () => {
-        // Always refetch after error or success to sync with server truth
-        queryClient.invalidateQueries({ queryKey: queryKeys.user.dashboard() });
-      },
-      onSuccess: () => {
-        toast.success(successMsg);
-      },
-    });
-  };
-
   // 1. Optimistic Add Money
-  const addMoney = createOptimisticMutation(
+  const addMoney = useOptimisticWalletMutation(
+    queryClient,
     walletService.addMoney,
     (old, amount) => old + amount,
     "Funds added to wallet!"
   );
 
   // 2. Optimistic Transfer Money
-  const transferMoney = createOptimisticMutation(
+  const transferMoney = useOptimisticWalletMutation(
+    queryClient,
     walletService.transferMoney,
     (old, amount) => old - amount,
     "Money sent successfully!"
   );
 
   // 3. Optimistic Withdraw Money
-  const withdrawMoney = createOptimisticMutation(
+  const withdrawMoney = useOptimisticWalletMutation(
+    queryClient,
     walletService.withdrawMoney,
     (old, amount) => old - amount,
     "Withdrawal successful!"

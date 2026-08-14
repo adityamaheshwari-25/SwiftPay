@@ -1,4 +1,4 @@
-import { useForm } from "react-hook-form";
+import { useForm, useWatch } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { Landmark, Hash, Banknote, Loader2, ShieldCheck } from "lucide-react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
@@ -12,7 +12,7 @@ export const AddBankAccountModal = ({ open, onOpenChange, onSubmit, isLoading })
   const {
     register,
     handleSubmit,
-    watch,
+    control,
     formState: { errors, isValid },
     reset,
   } = useForm({
@@ -25,8 +25,8 @@ export const AddBankAccountModal = ({ open, onOpenChange, onSubmit, isLoading })
       ifsc: "",
     },
   });
-  const accountNumberValue = watch("accountNumber", "");
-  const ifscValue = watch("ifsc", "");
+  const accountNumberValue = useWatch({ control, name: "accountNumber", defaultValue: "" });
+  const ifscValue = useWatch({ control, name: "ifsc", defaultValue: "" });
   const accountDigits = (accountNumberValue || "").replace(/\D/g, "");
   const accountNumberLooksValid = /^\d{9,18}$/.test(accountDigits);
   const ifscLooksValid = /^[A-Za-z]{4}0[A-Za-z0-9]{6}$/.test(ifscValue || "");

@@ -1,4 +1,4 @@
-import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query"
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { queryKeys } from "./queryKeys"
 import { merchantService } from "@/services/api/merchantService"
 import { toast } from "sonner";

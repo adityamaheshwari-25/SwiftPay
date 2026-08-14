@@ -1,0 +1,13 @@
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+*.tfvars
+backend.hcl
+/bootstrap/backend.tf
+/bootstrap/backend.tf.remote
+crash.log
+crash.*.log
+
+!*.tfvars.example
+!backend.hcl.example

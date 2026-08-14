@@ -1,4 +1,4 @@
-import { motion } from "framer-motion";
+import { motion as Motion } from "framer-motion";
 import { Home, History, QrCode, User, Store } from "lucide-react";
 import { useLocation, useNavigate } from "react-router-dom";
 
@@ -22,7 +22,7 @@ export function BottomNav({ variant = "user" }) {
   const navItems = variant === "user" ? userNavItems : merchantNavItems;
 
   return (
-    <motion.nav
+    <Motion.nav
       initial={{ y: 100 }}
       animate={{ y: 0 }}
       transition={{ type: "spring", damping: 20 }}
@@ -38,7 +38,7 @@ export function BottomNav({ variant = "user" }) {
               className="flex flex-col items-center gap-1 px-4 py-1 relative"
             >
               {isActive && (
-                <motion.div
+                <Motion.div
                   layoutId="navIndicator"
                   className="absolute -top-3 w-8 h-1 rounded-full bg-primary"
                   transition={{ type: "spring", damping: 20 }}
@@ -54,6 +54,6 @@ export function BottomNav({ variant = "user" }) {
           );
         })}
       </div>
-    </motion.nav>
+    </Motion.nav>
   );
 }

@@ -1,0 +1,321 @@
+name: Production backend CI/CD
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "PaytmCloneBackend/**"
+      - ".github/workflows/prod-backend.yml"
+  release:
+    types:
+      - published
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.event_name == 'pull_request' && format('swiftpay-backend-pr-{0}', github.event.pull_request.number) || 'swiftpay-production-mutation' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  reject_invalid_manual_ref:
+    name: Reject non-main manual production run
+    if: ${{ github.event_name == 'workflow_dispatch' && github.ref != 'refs/heads/main' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Reject unsupported ref
+        run: |
+          echo "::error::Manual production backend deployments may only run from main."
+          exit 1
+
+  build:
+    name: Test and package backend
+    if: ${{ github.event_name != 'workflow_dispatch' || github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    permissions:
+      contents: read
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Verify stable release tag is reachable from main
+        if: ${{ github.event_name == 'release' }}
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          if [[ ! "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::Production release tags must use the stable vMAJOR.MINOR.PATCH format."
+            exit 1
+          fi
+
+          if ! git show-ref --verify --quiet refs/remotes/origin/main; then
+            echo "::error::The full checkout did not contain origin/main."
+            exit 1
+          fi
+          release_commit="$(git rev-parse 'HEAD^{commit}')"
+          if ! git merge-base --is-ancestor "$release_commit" origin/main; then
+            echo "::error::Release $RELEASE_TAG is not reachable from the protected main branch."
+            exit 1
+          fi
+
+      - name: Set up Java 17
+        uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: maven
+          cache-dependency-path: PaytmCloneBackend/pom.xml
+
+      - name: Make Maven wrapper executable
+        run: chmod +x mvnw
+        working-directory: PaytmCloneBackend
+
+      - name: Run tests and package Spring Boot JAR
+        run: ./mvnw --batch-mode --no-transfer-progress clean verify
+        working-directory: PaytmCloneBackend
+
+      - name: Select executable JAR
+        if: ${{ github.event_name != 'pull_request' }}
+        id: jar
+        shell: bash
+        working-directory: PaytmCloneBackend
+        run: |
+          mapfile -t jars < <(
+            find target -maxdepth 1 -type f -name '*.jar' \
+              ! -name '*.original' \
+              ! -name '*-sources.jar' \
+              ! -name '*-javadoc.jar'
+          )
+
+          if [[ "${#jars[@]}" -ne 1 ]]; then
+            echo "::error::Expected exactly one executable JAR, found ${#jars[@]}."
+            printf '%s\n' "${jars[@]}"
+            exit 1
+          fi
+
+          mkdir -p deployment
+          cp "${jars[0]}" deployment/swiftpay-backend.jar
+
+      - name: Upload deployable JAR
+        if: ${{ github.event_name != 'pull_request' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: swiftpay-backend-${{ github.sha }}
+          path: PaytmCloneBackend/deployment/swiftpay-backend.jar
+          if-no-files-found: error
+          retention-days: 14
+
+  deploy:
+    name: Deploy through staging slot
+    needs: build
+    if: >-
+      ${{
+        (github.event_name == 'release' && github.event.release.prerelease == false) ||
+        (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')
+      }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment:
+      name: production
+      url: https://${{ steps.webapp.outputs.production_hostname }}
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - name: Download deployable JAR
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: swiftpay-backend-${{ github.sha }}
+          path: deployment
+
+      - name: Sign in to Azure with OpenID Connect
+        uses: azure/login@2dd0bbf4064d5a1812889dc200bb8eed2597f82a # v3
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Resolve production App Service and staging slot
+        id: webapp
+        shell: bash
+        env:
+          RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
+          WEBAPP_NAME: ${{ vars.AZURE_WEBAPP_NAME }}
+          SLOT_NAME: staging
+        run: |
+          if [[ -z "$RESOURCE_GROUP" ]]; then
+            echo "::error::AZURE_RESOURCE_GROUP is not configured in the production environment."
+            exit 1
+          fi
+
+          if [[ -z "$WEBAPP_NAME" ]]; then
+            echo "::error::AZURE_WEBAPP_NAME is not configured in the production environment."
+            exit 1
+          fi
+
+          production_hostname="$(
+            az webapp show \
+              --resource-group "$RESOURCE_GROUP" \
+              --name "$WEBAPP_NAME" \
+              --query defaultHostName \
+              --output tsv
+          )"
+
+          staging_hostname="$(
+            az webapp show \
+              --resource-group "$RESOURCE_GROUP" \
+              --name "$WEBAPP_NAME" \
+              --slot "$SLOT_NAME" \
+              --query defaultHostName \
+              --output tsv
+          )"
+
+          if [[ -z "$production_hostname" || -z "$staging_hostname" ]]; then
+            echo "::error::Unable to resolve the production app and its '$SLOT_NAME' slot."
+            exit 1
+          fi
+
+          echo "production_hostname=$production_hostname" >> "$GITHUB_OUTPUT"
+          echo "staging_hostname=$staging_hostname" >> "$GITHUB_OUTPUT"
+
+      - name: Start staging slot
+        shell: bash
+        env:
+          RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
+          WEBAPP_NAME: ${{ vars.AZURE_WEBAPP_NAME }}
+        run: |
+          az webapp start \
+            --resource-group "$RESOURCE_GROUP" \
+            --name "$WEBAPP_NAME" \
+            --slot staging
+
+      - name: Deploy JAR to staging slot
+        uses: azure/webapps-deploy@b686016b4de8820a23519503685d8d03fbfa03a6 # v3
+        with:
+          app-name: ${{ vars.AZURE_WEBAPP_NAME }}
+          slot-name: staging
+          package: deployment/swiftpay-backend.jar
+
+      - name: Verify staging health
+        shell: bash
+        env:
+          HEALTH_URL: https://${{ steps.webapp.outputs.staging_hostname }}/actuator/health
+        run: |
+          for attempt in {1..20}; do
+            status_code="$(
+              curl --silent --show-error \
+                --connect-timeout 5 \
+                --max-time 10 \
+                --output health.json \
+                --write-out '%{http_code}' \
+                "$HEALTH_URL" || true
+            )"
+
+            if [[ "$status_code" == "200" ]] && jq --exit-status '.status == "UP"' health.json >/dev/null 2>&1; then
+              echo "Staging health check passed: $HEALTH_URL"
+              exit 0
+            fi
+
+            echo "Waiting for staging to become healthy (attempt $attempt/20, HTTP $status_code)..."
+            sleep 5
+          done
+
+          echo "::error::Staging did not become healthy: $HEALTH_URL"
+          exit 1
+
+      - name: Swap staging into production
+        id: swap
+        shell: bash
+        env:
+          RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
+          WEBAPP_NAME: ${{ vars.AZURE_WEBAPP_NAME }}
+        run: |
+          az webapp deployment slot swap \
+            --resource-group "$RESOURCE_GROUP" \
+            --name "$WEBAPP_NAME" \
+            --slot staging \
+            --target-slot production
+
+      - name: Verify production health
+        id: production_health
+        shell: bash
+        env:
+          HEALTH_URL: https://${{ steps.webapp.outputs.production_hostname }}/actuator/health
+        run: |
+          for attempt in {1..20}; do
+            status_code="$(
+              curl --silent --show-error \
+                --connect-timeout 5 \
+                --max-time 10 \
+                --output health.json \
+                --write-out '%{http_code}' \
+                "$HEALTH_URL" || true
+            )"
+
+            if [[ "$status_code" == "200" ]] && jq --exit-status '.status == "UP"' health.json >/dev/null 2>&1; then
+              echo "Production health check passed: $HEALTH_URL"
+              exit 0
+            fi
+
+            echo "Waiting for production to become healthy (attempt $attempt/20, HTTP $status_code)..."
+            sleep 5
+          done
+
+          echo "::error::Production did not become healthy after the slot swap: $HEALTH_URL"
+          exit 1
+
+      - name: Roll back failed production swap
+        if: ${{ failure() && steps.swap.outcome == 'success' && steps.production_health.outcome == 'failure' }}
+        shell: bash
+        env:
+          RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
+          WEBAPP_NAME: ${{ vars.AZURE_WEBAPP_NAME }}
+          HEALTH_URL: https://${{ steps.webapp.outputs.production_hostname }}/actuator/health
+        run: |
+          echo "Production health verification failed; swapping the previous version back."
+          az webapp deployment slot swap \
+            --resource-group "$RESOURCE_GROUP" \
+            --name "$WEBAPP_NAME" \
+            --slot staging \
+            --target-slot production
+
+          for attempt in {1..20}; do
+            status_code="$(
+              curl --silent --show-error \
+                --connect-timeout 5 \
+                --max-time 10 \
+                --output rollback-health.json \
+                --write-out '%{http_code}' \
+                "$HEALTH_URL" || true
+            )"
+
+            if [[ "$status_code" == "200" ]] && jq --exit-status '.status == "UP"' rollback-health.json >/dev/null 2>&1; then
+              echo "Rollback completed and production is healthy."
+              exit 0
+            fi
+
+            echo "Waiting for production to recover (attempt $attempt/20, HTTP $status_code)..."
+            sleep 5
+          done
+
+          echo "::error::Rollback swap completed, but production is still unhealthy: $HEALTH_URL"
+          exit 1
+
+      - name: Stop staging after the deployment attempt
+        if: ${{ always() && steps.webapp.outcome == 'success' }}
+        continue-on-error: true
+        shell: bash
+        env:
+          RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
+          WEBAPP_NAME: ${{ vars.AZURE_WEBAPP_NAME }}
+        run: |
+          az webapp stop \
+            --resource-group "$RESOURCE_GROUP" \
+            --name "$WEBAPP_NAME" \
+            --slot staging
