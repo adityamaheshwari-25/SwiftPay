@@ -136,6 +136,17 @@ resource "azurerm_role_assignment" "terraform_production_contributor" {
   principal_type       = "ServicePrincipal"
 }
 
+# Contributor excludes Microsoft.Authorization/*/write and therefore cannot
+# create the CanNotDelete locks declared by the production stack. Keep this
+# additional permission narrowly scoped to lock operations in the production
+# resource group.
+resource "azurerm_role_assignment" "terraform_production_locks" {
+  scope                = azurerm_resource_group.production.id
+  role_definition_name = "Locks Contributor"
+  principal_id         = azurerm_user_assigned_identity.terraform_ci.principal_id
+  principal_type       = "ServicePrincipal"
+}
+
 # Contributor cannot create role assignments. RBAC Administrator is scoped only
 # to the production resource group so the CI identity has no subscription-wide
 # authorization rights.
