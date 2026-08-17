@@ -91,6 +91,16 @@ output "mysql_application_username" {
   value       = var.database_application_username
 }
 
+output "migration_host" {
+  description = "Temporary migration host connection details. Null when enable_migration_host=false."
+  value = var.enable_migration_host ? {
+    name        = azurerm_linux_virtual_machine.migration_host[0].name
+    public_ip   = azurerm_public_ip.migration_host[0].ip_address
+    username    = azurerm_linux_virtual_machine.migration_host[0].admin_username
+    ssh_command = "ssh azureadmin@${azurerm_public_ip.migration_host[0].ip_address}"
+  } : null
+}
+
 output "key_vault_name" {
   description = "Private production Key Vault name."
   value       = azurerm_key_vault.application.name

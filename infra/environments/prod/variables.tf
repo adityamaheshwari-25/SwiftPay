@@ -484,3 +484,56 @@ variable "enable_delete_locks" {
   type        = bool
   default     = true
 }
+
+variable "enable_migration_host" {
+  description = "Temporarily create the SSH-key-only production database migration VM and its isolated administration subnet. Disable immediately after migration evidence is captured."
+  type        = bool
+  default     = false
+}
+
+variable "migration_host_subnet_prefixes" {
+  description = "Dedicated subnet used only by the temporary database migration VM."
+  type        = list(string)
+  default     = ["10.20.4.0/27"]
+
+  validation {
+    condition     = length(var.migration_host_subnet_prefixes) == 1 && can(cidrhost(var.migration_host_subnet_prefixes[0], 1))
+    error_message = "migration_host_subnet_prefixes must contain exactly one valid CIDR prefix."
+  }
+}
+
+variable "migration_operator_cidr" {
+  description = "Single trusted public IPv4 address in /32 notation allowed to SSH to the temporary migration VM. Required only when enable_migration_host=true."
+  type        = string
+  default     = null
+  nullable    = true
+
+  validation {
+    condition = (
+      !var.enable_migration_host ||
+      try(cidrnetmask(var.migration_operator_cidr) == "255.255.255.255", false)
+    )
+    error_message = "migration_operator_cidr must be a valid public IPv4 /32 when enable_migration_host=true."
+  }
+}
+
+variable "migration_host_ssh_public_key" {
+  description = "OpenSSH public key used for the temporary migration VM. Required only when enable_migration_host=true."
+  type        = string
+  default     = null
+  nullable    = true
+
+  validation {
+    condition = (
+      !var.enable_migration_host ||
+      try(can(regex("^(ssh-ed25519|ssh-rsa|ecdsa-sha2-nistp(256|384|521)) [A-Za-z0-9+/]+={0,3}( .*)?$", trimspace(var.migration_host_ssh_public_key))), false)
+    )
+    error_message = "migration_host_ssh_public_key must be a valid OpenSSH public key when enable_migration_host=true."
+  }
+}
+
+variable "migration_host_vm_size" {
+  description = "Azure VM size for the temporary database migration host."
+  type        = string
+  default     = "Standard_B2s"
+}

@@ -149,6 +149,10 @@ recovery, or the independent review required by the exit criteria.
 Run this only after Terraform has created the private server and after the V1/V2
 migration pull request is approved.
 
+For the concrete temporary-host, GitHub variable, SSH, Flyway, verification,
+and cleanup commands, follow
+[`production-database-migration-execution.md`](production-database-migration-execution.md).
+
 1. Start an approved VNet-connected migration host. Confirm the production FQDN
    resolves to a private address and connect with
    `--ssl-mode=VERIFY_IDENTITY`.

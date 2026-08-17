@@ -34,6 +34,12 @@ mysql_backup_retention_days                    = 35
 mysql_geo_redundant_backup_enabled             = false
 mysql_zone_redundant_high_availability_enabled = false
 
+# Enable only for the approved migration window, then set it back to false and
+# apply again to remove the temporary VM, public IP, NIC, NSG, and admin subnet.
+enable_migration_host          = false
+migration_operator_cidr        = null
+migration_host_ssh_public_key  = null
+
 hikari_maximum_pool_size  = 10
 hikari_minimum_idle       = 2
 jwt_expiration            = "10h"
