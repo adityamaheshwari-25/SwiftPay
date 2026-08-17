@@ -349,16 +349,25 @@ Bootstrap constructs two OIDC subjects:
 
 ```hcl
 locals {
-  terraform_github_subject = "repo:${var.github_organization}/${var.github_repository}:environment:${var.terraform_github_environment}"
-  deploy_github_subject    = "repo:${var.github_organization}/${var.github_repository}:environment:${var.deploy_github_environment}"
+  github_repository_subject = "${var.github_organization}@${var.github_owner_id}/${var.github_repository}@${var.github_repository_id}"
+  terraform_github_subject  = "repo:${local.github_repository_subject}:environment:${var.terraform_github_environment}"
+  deploy_github_subject     = "repo:${local.github_repository_subject}:environment:${var.deploy_github_environment}"
 }
+```
+
+GitHub repositories using immutable OIDC subjects include the numeric owner and
+repository IDs. For this repository, the resulting trusted subjects are:
+
+```text
+repo:adityamaheshwari-25@281927465/SwiftPay@1309554667:environment:production-infrastructure
+repo:adityamaheshwari-25@281927465/SwiftPay@1309554667:environment:production
 ```
 
 With the repository defaults, these conceptually become:
 
 ```text
-repo:<owner>/<repository>:environment:production-infrastructure
-repo:<owner>/<repository>:environment:production
+repo:<owner>@<owner-id>/<repository>@<repository-id>:environment:production-infrastructure
+repo:<owner>@<owner-id>/<repository>@<repository-id>:environment:production
 ```
 
 Bootstrap places them into Azure federated identity credentials:

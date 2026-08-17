@@ -14,8 +14,9 @@ locals {
     var.tags,
   )
 
-  terraform_github_subject = "repo:${var.github_organization}/${var.github_repository}:environment:${var.terraform_github_environment}"
-  deploy_github_subject    = "repo:${var.github_organization}/${var.github_repository}:environment:${var.deploy_github_environment}"
+  github_repository_subject = "${var.github_organization}@${var.github_owner_id}/${var.github_repository}@${var.github_repository_id}"
+  terraform_github_subject  = "repo:${local.github_repository_subject}:environment:${var.terraform_github_environment}"
+  deploy_github_subject     = "repo:${local.github_repository_subject}:environment:${var.deploy_github_environment}"
 }
 
 resource "azurerm_resource_group" "state" {

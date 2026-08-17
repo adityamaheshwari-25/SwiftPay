@@ -6,8 +6,10 @@ unique_suffix   = "a1b2c3"
 
 # These values are case-sensitive in the GitHub OIDC subject. They match this
 # repository's current origin: git@github.com:adityamaheshwari-25/SwiftPay.git.
-github_organization = "adityamaheshwari-25"
-github_repository   = "SwiftPay"
+github_organization  = "adityamaheshwari-25"
+github_owner_id      = "281927465"
+github_repository    = "SwiftPay"
+github_repository_id = "1309554667"
 terraform_github_environment = "production-infrastructure"
 deploy_github_environment    = "production"
 
