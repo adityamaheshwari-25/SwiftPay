@@ -3,6 +3,7 @@ provider "azurerm" {
   resource_provider_registrations = "none"
   resource_providers_to_register = [
     "Microsoft.Authorization",
+    "Microsoft.Compute",
     "Microsoft.DBforMySQL",
     "Microsoft.Insights",
     "Microsoft.KeyVault",
