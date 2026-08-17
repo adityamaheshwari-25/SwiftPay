@@ -133,10 +133,13 @@ From the cloned repository, run:
 bash ./scripts/production-db-migrate.sh <APPROVED_COMMIT_SHA>
 ```
 
-The script first runs `info` and `validate`. Review that output. It then requires
-an exact commit-specific confirmation before it runs `migrate`. After migration
-it runs `validate`, `info`, and a second no-op `migrate`, and stores non-secret
-evidence under the VM user's home directory.
+The script first runs `info` and a pre-migration `validate` that permits only
+the expected pending state. It also refuses to continue unless the migration
+directory contains exactly the reviewed V1 and V2 SQL files. Review that
+output. It then requires an exact commit-specific confirmation before it runs
+`migrate`. After migration it runs strict `validate`, `info`, and a second
+no-op `migrate`, and stores non-secret evidence under the VM user's home
+directory.
 
 The script also downloads the pinned official MySQL Connector/J, verifies its
 SHA-256 checksum, mounts it read-only into the Flyway container, and disables

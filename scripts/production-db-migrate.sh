@@ -49,6 +49,12 @@ if [[ ! -f "$migration_directory/V1__authoritative_baseline.sql" ]] ||
   exit 1
 fi
 
+migration_files=("$migration_directory"/*.sql)
+if (( ${#migration_files[@]} != 2 )); then
+  echo "Expected exactly the reviewed V1 and V2 SQL migrations; found ${#migration_files[@]}." >&2
+  exit 1
+fi
+
 mapfile -t mysql_addresses < <(getent ahostsv4 "$MYSQL_FQDN" | awk '{print $1}' | sort -u)
 if (( ${#mysql_addresses[@]} == 0 )); then
   echo "Private DNS did not resolve $MYSQL_FQDN." >&2
@@ -142,7 +148,8 @@ run_flyway() {
 
 echo "Inspecting the target before any schema mutation..."
 run_flyway info | tee "$evidence_directory/01-info-before.txt"
-run_flyway validate | tee "$evidence_directory/02-validate-before.txt"
+run_flyway -ignoreMigrationPatterns="*:pending" validate |
+  tee "$evidence_directory/02-validate-before.txt"
 
 confirmation=""
 read -r -p "Type MIGRATE-$short_commit to apply V1/V2 to production: " confirmation
