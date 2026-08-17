@@ -2,6 +2,11 @@
 set -Eeuo pipefail
 
 readonly FLYWAY_IMAGE="flyway/flyway:11.14.1"
+readonly MYSQL_CONNECTOR_VERSION="9.7.0"
+readonly MYSQL_CONNECTOR_SHA256="0353648eaa1c91e0f4020c959abf756bc866ffd583df22ae6b6f6e0cbd43eb44"
+readonly MYSQL_CONNECTOR_URL="https://repo.maven.apache.org/maven2/com/mysql/mysql-connector-j/${MYSQL_CONNECTOR_VERSION}/mysql-connector-j-${MYSQL_CONNECTOR_VERSION}.jar"
+readonly MYSQL_DRIVER_DIRECTORY="${MYSQL_DRIVER_DIRECTORY:-$HOME/.cache/swiftpay-flyway-drivers}"
+readonly MYSQL_DRIVER_JAR="$MYSQL_DRIVER_DIRECTORY/mysql-connector-j-${MYSQL_CONNECTOR_VERSION}.jar"
 readonly MYSQL_FQDN="${MYSQL_FQDN:-mysql-swiftpay-prod-am26k7p-southindia.mysql.database.azure.com}"
 readonly MYSQL_DATABASE="${MYSQL_DATABASE:-swiftpay}"
 readonly MIGRATION_USER="${MIGRATION_USER:-swiftpay_migrator}"
@@ -12,7 +17,7 @@ if [[ -z "$approved_commit" ]]; then
   exit 2
 fi
 
-for command_name in docker getent git sha256sum; do
+for command_name in curl docker getent git sha256sum; do
   if ! command -v "$command_name" >/dev/null 2>&1; then
     echo "Required command is unavailable: $command_name" >&2
     exit 1
@@ -72,9 +77,32 @@ sha256sum \
 printf '%s\n' "$actual_commit" > "$evidence_directory/approved-commit.txt"
 printf '%s\n' "${mysql_addresses[@]}" > "$evidence_directory/mysql-private-addresses.txt"
 
+mkdir -p "$MYSQL_DRIVER_DIRECTORY"
+chmod 0700 "$MYSQL_DRIVER_DIRECTORY"
+
+if ! printf '%s  %s\n' "$MYSQL_CONNECTOR_SHA256" "$MYSQL_DRIVER_JAR" |
+  sha256sum --check --status 2>/dev/null; then
+  driver_download="$MYSQL_DRIVER_JAR.download"
+  rm -f "$driver_download"
+  curl --fail --location --proto '=https' --tlsv1.2 \
+    --output "$driver_download" \
+    "$MYSQL_CONNECTOR_URL"
+
+  if ! printf '%s  %s\n' "$MYSQL_CONNECTOR_SHA256" "$driver_download" |
+    sha256sum --check --status; then
+    rm -f "$driver_download"
+    echo "Downloaded MySQL Connector/J checksum did not match the approved value." >&2
+    exit 1
+  fi
+
+  mv "$driver_download" "$MYSQL_DRIVER_JAR"
+  chmod 0600 "$MYSQL_DRIVER_JAR"
+fi
+
+sha256sum "$MYSQL_DRIVER_JAR" | tee "$evidence_directory/mysql-connector-j.sha256"
 docker image inspect "$FLYWAY_IMAGE" >/dev/null 2>&1 || docker pull "$FLYWAY_IMAGE"
 
-export FLYWAY_URL="jdbc:mysql://${MYSQL_FQDN}:3306/${MYSQL_DATABASE}?sslMode=VERIFY_IDENTITY&serverTimezone=UTC"
+export FLYWAY_URL="jdbc:mysql://${MYSQL_FQDN}:3306/${MYSQL_DATABASE}?sslMode=VERIFY_IDENTITY&serverTimezone=UTC&disableMariaDbDriver=true"
 export FLYWAY_USER="$MIGRATION_USER"
 export FLYWAY_LOCATIONS="filesystem:/flyway/sql"
 export FLYWAY_DEFAULT_SCHEMA="$MYSQL_DATABASE"
@@ -85,8 +113,12 @@ export FLYWAY_CLEAN_DISABLED="true"
 export FLYWAY_OUT_OF_ORDER="false"
 export FLYWAY_VALIDATE_MIGRATION_NAMING="true"
 
-read -r -s -p "Password for ${MIGRATION_USER}: " FLYWAY_PASSWORD
+IFS= read -r -s -p "Password for ${MIGRATION_USER}: " FLYWAY_PASSWORD
 echo
+if [[ -z "$FLYWAY_PASSWORD" ]]; then
+  echo "The migration password cannot be empty." >&2
+  exit 1
+fi
 export FLYWAY_PASSWORD
 trap 'unset FLYWAY_PASSWORD' EXIT
 
@@ -103,6 +135,7 @@ run_flyway() {
     --env FLYWAY_CLEAN_DISABLED \
     --env FLYWAY_OUT_OF_ORDER \
     --env FLYWAY_VALIDATE_MIGRATION_NAMING \
+    --volume "$MYSQL_DRIVER_JAR:/flyway/drivers/mysql-connector-j-${MYSQL_CONNECTOR_VERSION}.jar:ro" \
     --volume "$migration_directory:/flyway/sql:ro" \
     "$FLYWAY_IMAGE" "$@"
 }

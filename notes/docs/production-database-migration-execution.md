@@ -138,6 +138,11 @@ an exact commit-specific confirmation before it runs `migrate`. After migration
 it runs `validate`, `info`, and a second no-op `migrate`, and stores non-secret
 evidence under the VM user's home directory.
 
+The script also downloads the pinned official MySQL Connector/J, verifies its
+SHA-256 checksum, mounts it read-only into the Flyway container, and disables
+Flyway's MariaDB JDBC fallback. This is required for the production MySQL 8
+authentication configuration.
+
 Do not run `flyway clean`, `baseline`, or `repair`.
 
 ## 10. Verify database objects
