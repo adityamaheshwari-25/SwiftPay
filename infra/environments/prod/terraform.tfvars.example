@@ -24,13 +24,15 @@ superadmin_email = "platform-admin@example.com"
 app_service_instance_count        = 1
 app_service_zone_balancing_enabled = false
 enable_app_service_autoscale       = false
+service_plan_sku_name              = "S1"
 
 mysql_version                                  = "8.0.21"
+mysql_location                                 = "South India"
 mysql_sku_name                                 = "GP_Standard_D2ds_v4"
 mysql_storage_size_gb                          = 128
 mysql_backup_retention_days                    = 35
 mysql_geo_redundant_backup_enabled             = false
-mysql_zone_redundant_high_availability_enabled = true
+mysql_zone_redundant_high_availability_enabled = false
 
 hikari_maximum_pool_size  = 10
 hikari_minimum_idle       = 2

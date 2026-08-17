@@ -56,9 +56,10 @@ Application Insights uses one.
    region, add the tag `Environment=Development`, and create it.
 5. Repeat for `rg-swiftpay-prod` with `Environment=Production`.
 
-Keep the App Service, database, Key Vault, storage account, Application Insights,
-and virtual network for an environment in the same region whenever the service
-supports that region.
+Keep the App Service, Key Vault, storage account, Application Insights, and
+virtual network for an environment in the same region. MySQL production uses
+South India with Private Link because the target subscription cannot currently
+provision MySQL Flexible Server in Central India.
 
 ## 2. Plan virtual networking
 
@@ -71,11 +72,9 @@ Before creating production:
 1. Search for **Virtual networks** and choose **Create**.
 2. Create `vnet-swiftpay-prod` in `rg-swiftpay-prod` with address space
    `10.20.0.0/16`.
-3. Add `snet-appservice` as `10.20.1.0/24`.
-4. Add `snet-mysql` as `10.20.2.0/24` and delegate it to
-   `Microsoft.DBforMySQL/flexibleServers`.
-
-Do not place other resources in the delegated MySQL subnet.
+3. Add `snet-appservice` as `10.20.1.0/26` and delegate it to App Service.
+4. Add `snet-private-endpoints` as `10.20.3.0/24` with private-endpoint network
+   policies disabled.
 
 ## 3. Create Azure Database for MySQL Flexible Server
 
@@ -85,18 +84,18 @@ Repeat these steps once in each resource group.
    **Create**.
 2. Select the corresponding resource group and use
    `mysql-swiftpay-<env>-<suffix>`.
-3. Choose a currently supported MySQL version and the same region as the
-   backend. Select a small burstable compute size for development and a
-   production-appropriate general-purpose size, availability, backup retention,
-   and redundancy for production.
+3. Choose a currently supported MySQL version. For this production subscription,
+   choose **South India**, a general-purpose size, backup retention, and the
+   supported availability mode.
 4. Choose MySQL authentication, create a unique administrator username, and
    generate a strong password. Do not reuse the dev credentials in production.
 5. Choose networking by environment:
    - Current dev: **Public access**, TLS required, and firewall rules restricted
      to the App Service outbound addresses as described in section 8.
-   - Future production: **Private access (VNet Integration)** using
-     `vnet-swiftpay-prod` and `snet-mysql`; let Azure create/select the linked
-     private DNS zone.
+   - Production: choose **Public access and Private endpoint**, disable public
+     network access, and create a private endpoint in
+     `vnet-swiftpay-prod/snet-private-endpoints`. Link it to the
+     `privatelink.mysql.database.azure.com` private DNS zone.
 6. Create the server.
 7. Open the server and use **Settings > Databases > Add** to create a database
    named `swiftpay`. If the portal does not show that blade, use the portal's

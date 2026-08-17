@@ -12,7 +12,6 @@ output "subnet_ids" {
   description = "Production subnet resource IDs."
   value = {
     app_integration   = azurerm_subnet.app_integration.id
-    mysql             = azurerm_subnet.mysql.id
     private_endpoints = azurerm_subnet.private_endpoints.id
   }
 }

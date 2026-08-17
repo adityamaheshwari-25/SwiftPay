@@ -148,6 +148,7 @@ resource "azurerm_linux_web_app" "backend" {
     azurerm_role_assignment.backend_blob_data,
     azurerm_role_assignment.backend_key_vault_secrets,
     azurerm_mysql_flexible_database.application,
+    azurerm_private_endpoint.mysql,
     azurerm_private_endpoint.blob,
     azurerm_private_endpoint.key_vault,
     azurerm_subnet_nat_gateway_association.app_integration,

@@ -1,7 +1,7 @@
 resource "azurerm_mysql_flexible_server" "primary" {
   name                = local.names.mysql
   resource_group_name = data.azurerm_resource_group.production.name
-  location            = data.azurerm_resource_group.production.location
+  location            = var.mysql_location
 
   administrator_login               = var.database_admin_username
   administrator_password_wo         = var.database_admin_password
@@ -14,8 +14,6 @@ resource "azurerm_mysql_flexible_server" "primary" {
   backup_retention_days        = var.mysql_backup_retention_days
   geo_redundant_backup_enabled = var.mysql_geo_redundant_backup_enabled
 
-  delegated_subnet_id   = azurerm_subnet.mysql.id
-  private_dns_zone_id   = azurerm_private_dns_zone.mysql.id
   public_network_access = "Disabled"
 
   dynamic "high_availability" {
@@ -41,14 +39,34 @@ resource "azurerm_mysql_flexible_server" "primary" {
 
   tags = local.common_tags
 
-  depends_on = [azurerm_private_dns_zone_virtual_network_link.mysql]
-
   lifecycle {
     ignore_changes = [
       zone,
       high_availability[0].standby_availability_zone,
     ]
   }
+}
+
+resource "azurerm_private_endpoint" "mysql" {
+  name                = "pep-${local.stem}-mysql"
+  resource_group_name = data.azurerm_resource_group.production.name
+  location            = data.azurerm_resource_group.production.location
+  subnet_id           = azurerm_subnet.private_endpoints.id
+  tags                = local.common_tags
+
+  private_service_connection {
+    name                           = "psc-${local.stem}-mysql"
+    private_connection_resource_id = azurerm_mysql_flexible_server.primary.id
+    subresource_names              = ["mysqlServer"]
+    is_manual_connection           = false
+  }
+
+  private_dns_zone_group {
+    name                 = "default"
+    private_dns_zone_ids = [azurerm_private_dns_zone.mysql.id]
+  }
+
+  depends_on = [azurerm_private_dns_zone_virtual_network_link.mysql]
 }
 
 resource "azurerm_mysql_flexible_database" "application" {

@@ -90,14 +90,8 @@ variable "app_integration_subnet_prefixes" {
   default     = ["10.20.1.0/26"]
 }
 
-variable "mysql_subnet_prefixes" {
-  description = "Dedicated subnet delegated to MySQL Flexible Server."
-  type        = list(string)
-  default     = ["10.20.2.0/24"]
-}
-
 variable "private_endpoint_subnet_prefixes" {
-  description = "Dedicated subnet for Storage and Key Vault private endpoints."
+  description = "Dedicated subnet for Storage, Key Vault, and MySQL private endpoints."
   type        = list(string)
   default     = ["10.20.3.0/24"]
 }
@@ -192,6 +186,12 @@ variable "mysql_version" {
   }
 }
 
+variable "mysql_location" {
+  description = "Azure region for MySQL Flexible Server. This can differ from the application region when Private Link is used."
+  type        = string
+  default     = "South India"
+}
+
 variable "mysql_sku_name" {
   description = "Production MySQL Flexible Server SKU."
   type        = string
@@ -227,9 +227,9 @@ variable "mysql_geo_redundant_backup_enabled" {
 }
 
 variable "mysql_zone_redundant_high_availability_enabled" {
-  description = "Deploy a zone-redundant MySQL standby. Disable only where the selected region/SKU has no AZ support."
+  description = "Deploy a zone-redundant MySQL standby only when the selected region and subscription support it."
   type        = bool
-  default     = true
+  default     = false
 }
 
 variable "mysql_primary_zone" {
@@ -257,9 +257,9 @@ variable "mysql_standby_zone" {
 }
 
 variable "service_plan_sku_name" {
-  description = "Linux App Service Plan SKU. Premium v3 is the production baseline."
+  description = "Linux App Service Plan SKU. Standard S1 supports the staging slot without requiring PremiumV3 quota."
   type        = string
-  default     = "P1v3"
+  default     = "S1"
 }
 
 variable "app_service_instance_count" {

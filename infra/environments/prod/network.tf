@@ -27,27 +27,6 @@ resource "azurerm_subnet" "app_integration" {
   }
 }
 
-resource "azurerm_subnet" "mysql" {
-  name                 = "snet-mysql"
-  resource_group_name  = data.azurerm_resource_group.production.name
-  virtual_network_name = azurerm_virtual_network.production.name
-  address_prefixes     = var.mysql_subnet_prefixes
-  service_endpoints    = ["Microsoft.Storage"]
-
-  default_outbound_access_enabled = false
-
-  delegation {
-    name = "mysql-flexible-server-delegation"
-
-    service_delegation {
-      name = "Microsoft.DBforMySQL/flexibleServers"
-      actions = [
-        "Microsoft.Network/virtualNetworks/subnets/join/action",
-      ]
-    }
-  }
-}
-
 resource "azurerm_subnet" "private_endpoints" {
   name                 = "snet-private-endpoints"
   resource_group_name  = data.azurerm_resource_group.production.name
@@ -91,30 +70,6 @@ resource "azurerm_network_security_group" "app_integration" {
   resource_group_name = data.azurerm_resource_group.production.name
   location            = data.azurerm_resource_group.production.location
   tags                = local.common_tags
-
-  security_rule {
-    name                       = "AllowAzurePlatformDns"
-    priority                   = 100
-    direction                  = "Outbound"
-    access                     = "Allow"
-    protocol                   = "*"
-    source_port_range          = "*"
-    destination_port_range     = "53"
-    source_address_prefix      = "*"
-    destination_address_prefix = "AzurePlatformDNS"
-  }
-
-  security_rule {
-    name                       = "AllowAzurePlatformImds"
-    priority                   = 105
-    direction                  = "Outbound"
-    access                     = "Allow"
-    protocol                   = "Tcp"
-    source_port_range          = "*"
-    destination_port_range     = "80"
-    source_address_prefix      = "*"
-    destination_address_prefix = "AzurePlatformIMDS"
-  }
 
   security_rule {
     name                       = "AllowVirtualNetwork"
@@ -210,7 +165,7 @@ resource "azurerm_subnet_network_security_group_association" "app_integration" {
 }
 
 resource "azurerm_private_dns_zone" "mysql" {
-  name                = "${local.stem}.mysql.database.azure.com"
+  name                = "privatelink.mysql.database.azure.com"
   resource_group_name = data.azurerm_resource_group.production.name
   tags                = local.common_tags
 }
