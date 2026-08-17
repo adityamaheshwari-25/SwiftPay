@@ -16,7 +16,7 @@ locals {
     frontend_static  = substr("swa-${local.stem}", 0, 40)
     key_vault        = substr("kv${var.unique_suffix}${local.compact_stem}", 0, 24)
     log_analytics    = "log-${local.stem}"
-    mysql            = substr("mysql-${local.stem}", 0, 63)
+    mysql            = substr("mysql-${local.stem}-${replace(lower(var.mysql_location), " ", "")}", 0, 63)
     nat_gateway      = "nat-${local.stem}"
     nat_public_ip    = "pip-${local.stem}-nat"
     network_security = "nsg-${local.stem}-app"
