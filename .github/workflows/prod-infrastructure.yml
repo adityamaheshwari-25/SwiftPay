@@ -120,6 +120,7 @@ jobs:
           OPTIONAL_ENABLE_MIGRATION_HOST: ${{ vars.TF_VAR_enable_migration_host }}
           OPTIONAL_MIGRATION_OPERATOR_CIDR: ${{ vars.TF_VAR_migration_operator_cidr }}
           OPTIONAL_MIGRATION_HOST_SSH_PUBLIC_KEY: ${{ vars.TF_VAR_migration_host_ssh_public_key }}
+          OPTIONAL_MIGRATION_HOST_VM_SIZE: ${{ vars.TF_VAR_migration_host_vm_size }}
         run: |
           required_names=(
             AZURE_CLIENT_ID
@@ -253,9 +254,16 @@ jobs:
                   echo "::error::TF_VAR_migration_host_ssh_public_key must be a valid OpenSSH public key when the migration host is enabled."
                   exit 1
                 fi
+                if [[ -n "${OPTIONAL_MIGRATION_HOST_VM_SIZE//[[:space:]]/}" ]] && [[ ! "$OPTIONAL_MIGRATION_HOST_VM_SIZE" =~ ^Standard_[A-Za-z0-9_]+$ ]]; then
+                  echo "::error::TF_VAR_migration_host_vm_size must be a valid Azure Standard VM SKU name."
+                  exit 1
+                fi
                 printf 'TF_VAR_enable_migration_host=true\n' >> "$GITHUB_ENV"
                 printf 'TF_VAR_migration_operator_cidr=%s\n' "$OPTIONAL_MIGRATION_OPERATOR_CIDR" >> "$GITHUB_ENV"
                 printf 'TF_VAR_migration_host_ssh_public_key=%s\n' "$OPTIONAL_MIGRATION_HOST_SSH_PUBLIC_KEY" >> "$GITHUB_ENV"
+                if [[ -n "${OPTIONAL_MIGRATION_HOST_VM_SIZE//[[:space:]]/}" ]]; then
+                  printf 'TF_VAR_migration_host_vm_size=%s\n' "$OPTIONAL_MIGRATION_HOST_VM_SIZE" >> "$GITHUB_ENV"
+                fi
                 ;;
               "false")
                 printf 'TF_VAR_enable_migration_host=false\n' >> "$GITHUB_ENV"

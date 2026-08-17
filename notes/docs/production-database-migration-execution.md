@@ -32,6 +32,7 @@ Environment variables**, add or update:
 | `TF_VAR_enable_migration_host` | `true` |
 | `TF_VAR_migration_operator_cidr` | The approved IPv4 address with `/32` |
 | `TF_VAR_migration_host_ssh_public_key` | Contents of the `.pub` file |
+| `TF_VAR_migration_host_vm_size` | Optional VM-size override; omit to use `Standard_D2as_v5` |
 
 These are variables, not secrets. Never put a private SSH key or a database
 password in these values.

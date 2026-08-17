@@ -535,5 +535,10 @@ variable "migration_host_ssh_public_key" {
 variable "migration_host_vm_size" {
   description = "Azure VM size for the temporary database migration host."
   type        = string
-  default     = "Standard_B2s"
+  default     = "Standard_D2as_v5"
+
+  validation {
+    condition     = can(regex("^Standard_[A-Za-z0-9_]+$", var.migration_host_vm_size))
+    error_message = "migration_host_vm_size must be a valid Azure Standard VM SKU name."
+  }
 }
