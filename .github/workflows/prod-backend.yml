@@ -184,7 +184,27 @@ jobs:
           echo "production_hostname=$production_hostname" >> "$GITHUB_OUTPUT"
           echo "staging_hostname=$staging_hostname" >> "$GITHUB_OUTPUT"
 
-      - name: Enable and start staging slot
+      - name: Validate Java deployment settings
+        shell: bash
+        env:
+          RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
+          WEBAPP_NAME: ${{ vars.AZURE_WEBAPP_NAME }}
+        run: |
+          run_from_package="$(
+            az webapp config appsettings list \
+              --resource-group "$RESOURCE_GROUP" \
+              --name "$WEBAPP_NAME" \
+              --slot staging \
+              --query "[?name=='WEBSITE_RUN_FROM_PACKAGE'].value | [0]" \
+              --output tsv
+          )"
+
+          if [[ -n "$run_from_package" ]]; then
+            echo "::error::WEBSITE_RUN_FROM_PACKAGE must be absent for an App Service Java deployment. Apply the production Terraform changes before deploying."
+            exit 1
+          fi
+
+      - name: Enable staging deployment endpoint
         shell: bash
         env:
           RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
@@ -204,11 +224,6 @@ jobs:
             --body '{"properties":{"enabled":true}}' \
             --output none
 
-          az rest \
-            --method post \
-            --url "${slot_resource_base_url}/start?api-version=2024-11-01" \
-            --output none
-
           scm_hostname="$(
             az webapp show \
               --resource-group "$RESOURCE_GROUP" \
@@ -223,13 +238,14 @@ jobs:
             exit 1
           fi
 
+          ready_samples=0
           for attempt in {1..30}; do
-            slot_state="$(
+            slot_enabled="$(
               az webapp show \
                 --resource-group "$RESOURCE_GROUP" \
                 --name "$WEBAPP_NAME" \
                 --slot staging \
-                --query state \
+                --query enabled \
                 --output tsv
             )"
             scm_status="$(
@@ -245,12 +261,17 @@ jobs:
 
             # An unauthenticated ready SCM endpoint returns 401. A stopped slot
             # returns 403 "Site Disabled", which makes OneDeploy fail.
-            if [[ "$slot_state" == "Running" && ( "$scm_status" == "200" || "$scm_status" == "401" ) ]]; then
-              echo "Staging slot and SCM deployment endpoint are ready."
-              exit 0
+            if [[ "$slot_enabled" == "true" && ( "$scm_status" == "200" || "$scm_status" == "401" ) ]]; then
+              ready_samples=$((ready_samples + 1))
+              if [[ "$ready_samples" -ge 3 ]]; then
+                echo "Staging slot and SCM deployment endpoint are stable."
+                exit 0
+              fi
+            else
+              ready_samples=0
             fi
 
-            echo "Waiting for staging deployment endpoint (attempt $attempt/30, state=$slot_state, HTTP $scm_status)..."
+            echo "Waiting for stable staging deployment endpoint (attempt $attempt/30, enabled=$slot_enabled, HTTP $scm_status, consecutive-ready=$ready_samples/3)..."
             sleep 5
           done
 
@@ -263,6 +284,42 @@ jobs:
           app-name: ${{ vars.AZURE_WEBAPP_NAME }}
           slot-name: staging
           package: deployment/swiftpay-backend.jar
+          type: jar
+
+      - name: Start staging slot
+        shell: bash
+        env:
+          RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
+          SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          WEBAPP_NAME: ${{ vars.AZURE_WEBAPP_NAME }}
+        run: |
+          slot_resource_base_url="https://management.azure.com/subscriptions/${SUBSCRIPTION_ID}/resourceGroups/${RESOURCE_GROUP}/providers/Microsoft.Web/sites/${WEBAPP_NAME}/slots/staging"
+          az rest \
+            --method post \
+            --url "${slot_resource_base_url}/start?api-version=2024-11-01" \
+            --output none
+
+          for attempt in {1..30}; do
+            slot_state="$(
+              az webapp show \
+                --resource-group "$RESOURCE_GROUP" \
+                --name "$WEBAPP_NAME" \
+                --slot staging \
+                --query state \
+                --output tsv
+            )"
+
+            if [[ "$slot_state" == "Running" ]]; then
+              echo "Staging slot is running."
+              exit 0
+            fi
+
+            echo "Waiting for staging slot to start (attempt $attempt/30, state=$slot_state)..."
+            sleep 5
+          done
+
+          echo "::error::Staging slot did not reach the Running state."
+          exit 1
 
       - name: Verify staging health
         shell: bash
