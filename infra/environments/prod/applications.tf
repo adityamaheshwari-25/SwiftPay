@@ -19,6 +19,7 @@ locals {
       SPRING_DATASOURCE_HIKARI_MINIMUM_IDLE       = tostring(var.hikari_minimum_idle)
       SPRING_DATASOURCE_HIKARI_VALIDATION_TIMEOUT = tostring(var.hikari_validation_timeout_ms)
       SPRING_PROFILES_ACTIVE                      = "prod"
+      WEBSITES_CONTAINER_START_TIME_LIMIT         = "900"
       WEBSITE_WARMUP_PATH                         = "/actuator/health"
       WEBSITE_WARMUP_STATUSES                     = "200"
     },
