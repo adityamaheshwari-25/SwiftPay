@@ -493,10 +493,15 @@ jobs:
             backend_web_app_name \
             backend_web_app_url \
             frontend_url \
-            migration_host \
             mysql_application_username \
             github_environment_variables \
             frontend_repository_variables \
             nat_gateway_public_ip; do
             terraform output -no-color "$output_name"
           done
+
+          if migration_host_output="$(terraform output -no-color migration_host 2>/dev/null)"; then
+            printf '%s\n' "$migration_host_output"
+          else
+            echo 'migration_host = null (disabled and removed)'
+          fi
