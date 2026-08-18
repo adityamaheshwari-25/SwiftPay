@@ -97,6 +97,11 @@ resource "azurerm_linux_web_app" "backend" {
   }
 
   site_config {
+    # The deployment workflow publishes a deliberately stable JAR name. Make
+    # the Java SE launch command explicit instead of relying on App Service's
+    # app.jar auto-detection, and bind the embedded server to App Service's
+    # public listener.
+    app_command_line                  = "java -jar /home/site/wwwroot/swiftpay-backend.jar --server.port=80"
     always_on                         = true
     ftps_state                        = "Disabled"
     health_check_path                 = "/actuator/health"
@@ -177,6 +182,7 @@ resource "azurerm_linux_web_app_slot" "staging" {
   }
 
   site_config {
+    app_command_line                  = "java -jar /home/site/wwwroot/swiftpay-backend.jar --server.port=80"
     always_on                         = true
     ftps_state                        = "Disabled"
     health_check_path                 = "/actuator/health"
