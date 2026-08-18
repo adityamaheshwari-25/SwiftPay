@@ -184,7 +184,7 @@ jobs:
           echo "production_hostname=$production_hostname" >> "$GITHUB_OUTPUT"
           echo "staging_hostname=$staging_hostname" >> "$GITHUB_OUTPUT"
 
-      - name: Start staging slot
+      - name: Start staging slot and wait for deployment endpoint
         shell: bash
         env:
           RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
@@ -194,6 +194,54 @@ jobs:
             --resource-group "$RESOURCE_GROUP" \
             --name "$WEBAPP_NAME" \
             --slot staging
+
+          scm_hostname="$(
+            az webapp show \
+              --resource-group "$RESOURCE_GROUP" \
+              --name "$WEBAPP_NAME" \
+              --slot staging \
+              --query "enabledHostNames[?contains(@, '.scm.')]|[0]" \
+              --output tsv
+          )"
+
+          if [[ -z "$scm_hostname" ]]; then
+            echo "::error::Unable to resolve the staging slot SCM hostname."
+            exit 1
+          fi
+
+          for attempt in {1..30}; do
+            slot_state="$(
+              az webapp show \
+                --resource-group "$RESOURCE_GROUP" \
+                --name "$WEBAPP_NAME" \
+                --slot staging \
+                --query state \
+                --output tsv
+            )"
+            scm_status="$(
+              curl \
+                --silent \
+                --output /dev/null \
+                --write-out '%{http_code}' \
+                --connect-timeout 5 \
+                --max-time 10 \
+                "https://${scm_hostname}/api/settings" \
+                || true
+            )"
+
+            # An unauthenticated ready SCM endpoint returns 401. A stopped slot
+            # returns 403 "Site Disabled", which makes OneDeploy fail.
+            if [[ "$slot_state" == "Running" && ( "$scm_status" == "200" || "$scm_status" == "401" ) ]]; then
+              echo "Staging slot and SCM deployment endpoint are ready."
+              exit 0
+            fi
+
+            echo "Waiting for staging deployment endpoint (attempt $attempt/30, state=$slot_state, HTTP $scm_status)..."
+            sleep 5
+          done
+
+          echo "::error::Staging slot did not expose a ready SCM deployment endpoint."
+          exit 1
 
       - name: Deploy JAR to staging slot
         uses: azure/webapps-deploy@b686016b4de8820a23519503685d8d03fbfa03a6 # v3
