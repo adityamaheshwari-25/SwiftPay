@@ -184,12 +184,22 @@ jobs:
           echo "production_hostname=$production_hostname" >> "$GITHUB_OUTPUT"
           echo "staging_hostname=$staging_hostname" >> "$GITHUB_OUTPUT"
 
-      - name: Start staging slot and wait for deployment endpoint
+      - name: Enable and start staging slot
         shell: bash
         env:
           RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
           WEBAPP_NAME: ${{ vars.AZURE_WEBAPP_NAME }}
         run: |
+          # Terraform keeps this slot disabled between releases. The App
+          # Service start action alone does not flip a resource-level
+          # enabled=false slot back to true.
+          az webapp update \
+            --resource-group "$RESOURCE_GROUP" \
+            --name "$WEBAPP_NAME" \
+            --slot staging \
+            --set enabled=true \
+            --output none
+
           az webapp start \
             --resource-group "$RESOURCE_GROUP" \
             --name "$WEBAPP_NAME" \
@@ -367,3 +377,10 @@ jobs:
             --resource-group "$RESOURCE_GROUP" \
             --name "$WEBAPP_NAME" \
             --slot staging
+
+          az webapp update \
+            --resource-group "$RESOURCE_GROUP" \
+            --name "$WEBAPP_NAME" \
+            --slot staging \
+            --set enabled=false \
+            --output none
