@@ -188,22 +188,26 @@ jobs:
         shell: bash
         env:
           RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
+          SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
           WEBAPP_NAME: ${{ vars.AZURE_WEBAPP_NAME }}
         run: |
           # Terraform keeps this slot disabled between releases. The App
           # Service start action alone does not flip a resource-level
-          # enabled=false slot back to true.
-          az webapp update \
-            --resource-group "$RESOURCE_GROUP" \
-            --name "$WEBAPP_NAME" \
-            --slot staging \
-            --set enabled=true \
+          # enabled=false slot back to true. Use a minimal PATCH so Azure does
+          # not re-submit the slot's runtime identity and require the deploy
+          # identity to have Managed Identity Operator permissions.
+          slot_resource_base_url="https://management.azure.com/subscriptions/${SUBSCRIPTION_ID}/resourceGroups/${RESOURCE_GROUP}/providers/Microsoft.Web/sites/${WEBAPP_NAME}/slots/staging"
+          az rest \
+            --method patch \
+            --url "${slot_resource_base_url}?api-version=2024-11-01" \
+            --headers "Content-Type=application/json" \
+            --body '{"properties":{"enabled":true}}' \
             --output none
 
-          az webapp start \
-            --resource-group "$RESOURCE_GROUP" \
-            --name "$WEBAPP_NAME" \
-            --slot staging
+          az rest \
+            --method post \
+            --url "${slot_resource_base_url}/start?api-version=2024-11-01" \
+            --output none
 
           scm_hostname="$(
             az webapp show \
@@ -371,16 +375,19 @@ jobs:
         shell: bash
         env:
           RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
+          SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
           WEBAPP_NAME: ${{ vars.AZURE_WEBAPP_NAME }}
         run: |
-          az webapp stop \
-            --resource-group "$RESOURCE_GROUP" \
-            --name "$WEBAPP_NAME" \
-            --slot staging
+          slot_resource_base_url="https://management.azure.com/subscriptions/${SUBSCRIPTION_ID}/resourceGroups/${RESOURCE_GROUP}/providers/Microsoft.Web/sites/${WEBAPP_NAME}/slots/staging"
+          az rest \
+            --method post \
+            --url "${slot_resource_base_url}/stop?api-version=2024-11-01" \
+            --output none \
+            || echo "::warning::The staging stop action failed; forcing enabled=false next."
 
-          az webapp update \
-            --resource-group "$RESOURCE_GROUP" \
-            --name "$WEBAPP_NAME" \
-            --slot staging \
-            --set enabled=false \
+          az rest \
+            --method patch \
+            --url "${slot_resource_base_url}?api-version=2024-11-01" \
+            --headers "Content-Type=application/json" \
+            --body '{"properties":{"enabled":false}}' \
             --output none
