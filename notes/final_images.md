@@ -22,3 +22,8 @@ After migration,
 <img width="1113" height="838" alt="image" src="https://github.com/user-attachments/assets/753807cd-a1e7-4ff6-b3a6-e429921b5fc1" />
 
 
+Just images:
+<img width="1919" height="948" alt="image" src="https://github.com/user-attachments/assets/bc27de4c-575f-45d6-93d0-5c1662334d22" />
+
+
+
